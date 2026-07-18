@@ -13,6 +13,8 @@
 
 pub mod builtins;
 pub mod genome;
+pub mod plugins;
+pub mod registry;
 pub mod render;
 pub mod wasm;
 pub mod flame;
