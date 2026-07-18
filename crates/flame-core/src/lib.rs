@@ -17,6 +17,7 @@ pub mod plugins;
 pub mod registry;
 pub mod render;
 pub mod wasm;
+pub mod xml;
 pub mod flame;
 pub mod rng;
 pub mod variation;
