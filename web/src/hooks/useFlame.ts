@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FlameInfo, FlameParams, WorkerResponse } from "@/lib/types";
+import type { FlameInfo, FlameParams, WorkerResponse, XformField, XformInfo } from "@/lib/types";
 
 export interface FlameState {
   bitmap: ImageData | null;
@@ -9,6 +9,8 @@ export interface FlameState {
   warnings: string[];
   info: FlameInfo | null;
   palette: number[] | null;
+  xforms: XformInfo[];
+  variationNames: string[];
 }
 
 /**
@@ -34,6 +36,8 @@ export function useFlame() {
     warnings: [],
     info: null,
     palette: null,
+    xforms: [],
+    variationNames: [],
   });
 
   const render = useCallback((params: FlameParams) => {
@@ -99,6 +103,14 @@ export function useFlame() {
           setState((s) => ({ ...s, palette: msg.rgb }));
           return;
 
+        case "xforms":
+          setState((s) => ({ ...s, xforms: msg.xforms }));
+          return;
+
+        case "variationNames":
+          setState((s) => ({ ...s, variationNames: msg.names }));
+          return;
+
         case "done": {
           if (msg.id !== inFlight.current) return;
           inFlight.current = null;
@@ -157,6 +169,29 @@ export function useFlame() {
     [],
   );
 
+  /** Fire-and-forget: the worker echoes an updated xform list where relevant. */
+  const send = useCallback((msg: Record<string, unknown>) => {
+    workerRef.current?.postMessage({ ...msg, id: ++nextId.current });
+  }, []);
+
+  const setCoefs = useCallback(
+    (xform: number, coefs: number[]) => send({ type: "setCoefs", xform, coefs }),
+    [send],
+  );
+  const addXform = useCallback(() => send({ type: "addXform" }), [send]);
+  const deleteXform = useCallback((xform: number) => send({ type: "deleteXform", xform }), [send]);
+  const duplicateXform = useCallback(
+    (xform: number) => send({ type: "duplicateXform", xform }),
+    [send],
+  );
+  const refreshXforms = useCallback(() => send({ type: "getXforms" }), [send]);
+  const setXformField = useCallback(
+    (xform: number, field: XformField, value: number) =>
+      send({ type: "setXformField", xform, field, value }),
+    [send],
+  );
+  const loadVariationNames = useCallback(() => send({ type: "variationNames" }), [send]);
+
   const dismissWarnings = useCallback(() => {
     setState((s) => ({ ...s, warnings: [] }));
   }, []);
@@ -169,6 +204,13 @@ export function useFlame() {
     save,
     setPalette,
     setVariation,
+    setCoefs,
+    addXform,
+    deleteXform,
+    duplicateXform,
+    refreshXforms,
+    setXformField,
+    loadVariationNames,
     dismissWarnings,
   };
 }

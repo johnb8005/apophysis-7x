@@ -198,6 +198,105 @@ impl FlameHandle {
         self.flame.xforms.get_mut(i).and_then(|xf| xf.set_variation_param(var, param, v))
     }
 
+    /// Append a transform, seeded as an identity linear map. Returns its index.
+    #[wasm_bindgen(js_name = addXform)]
+    pub fn add_xform(&mut self) -> usize {
+        let mut xf = XForm::default();
+        xf.density = 0.5;
+        // Spread new transforms around the colour range rather than stacking
+        // them all at 0, which is what the original's "add transform" does.
+        xf.color = if self.flame.xforms.is_empty() {
+            0.0
+        } else {
+            (self.flame.xforms.len() as f64 * 0.37).fract()
+        };
+        xf.set_variations(vec![(
+            Box::new(BuiltinVar::new(Builtin::Linear)) as Box<dyn Variation>,
+            1.0,
+        )]);
+        self.flame.xforms.push(xf);
+        self.flame.xforms.len() - 1
+    }
+
+    /// Duplicate transform `i`, appending the copy.
+    #[wasm_bindgen(js_name = duplicateXform)]
+    pub fn duplicate_xform(&mut self, i: usize) -> Option<usize> {
+        let xf = self.flame.xforms.get(i)?.clone();
+        self.flame.xforms.push(xf);
+        Some(self.flame.xforms.len() - 1)
+    }
+
+    /// Remove transform `i`. The last transform cannot be removed — a flame
+    /// with no transforms has nothing to iterate.
+    #[wasm_bindgen(js_name = deleteXform)]
+    pub fn delete_xform(&mut self, i: usize) -> bool {
+        if self.flame.xforms.len() <= 1 || i >= self.flame.xforms.len() {
+            return false;
+        }
+        self.flame.xforms.remove(i);
+        true
+    }
+
+    /// Post-transform coefficients of transform `i` as `[a, b, c, d, e, f]`.
+    #[wasm_bindgen(js_name = xformPost)]
+    pub fn xform_post(&self, i: usize) -> Vec<f64> {
+        match self.flame.xforms.get(i) {
+            Some(xf) => vec![xf.post.a, xf.post.b, xf.post.c, xf.post.d, xf.post.e, xf.post.f],
+            None => Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen(js_name = setXformPost)]
+    pub fn set_xform_post(&mut self, i: usize, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64) {
+        if let Some(xf) = self.flame.xforms.get_mut(i) {
+            xf.post = Affine { a, b, c, d, e, f };
+        }
+    }
+
+    #[wasm_bindgen(js_name = xformOpacity)]
+    pub fn xform_opacity(&self, i: usize) -> f64 {
+        self.flame.xforms.get(i).map(|x| x.opacity).unwrap_or(1.0)
+    }
+
+    #[wasm_bindgen(js_name = setXformOpacity)]
+    pub fn set_xform_opacity(&mut self, i: usize, v: f64) {
+        if let Some(xf) = self.flame.xforms.get_mut(i) {
+            xf.opacity = v.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Colour speed (XML `symmetry`).
+    #[wasm_bindgen(js_name = xformSymmetry)]
+    pub fn xform_symmetry(&self, i: usize) -> f64 {
+        self.flame.xforms.get(i).map(|x| x.symmetry).unwrap_or(0.0)
+    }
+
+    #[wasm_bindgen(js_name = setXformSymmetry)]
+    pub fn set_xform_symmetry(&mut self, i: usize, v: f64) {
+        if let Some(xf) = self.flame.xforms.get_mut(i) {
+            xf.symmetry = v.clamp(-1.0, 1.0);
+        }
+    }
+
+    /// The xaos row for transform `i` — transition weights to every transform.
+    #[wasm_bindgen(js_name = xformChaos)]
+    pub fn xform_chaos(&self, i: usize) -> Vec<f64> {
+        let n = self.flame.xforms.len();
+        match self.flame.xforms.get(i) {
+            Some(xf) => (0..n).map(|j| xf.mod_weights.get(j).copied().unwrap_or(1.0)).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    #[wasm_bindgen(js_name = setXformChaos)]
+    pub fn set_xform_chaos(&mut self, i: usize, j: usize, v: f64) {
+        if let Some(xf) = self.flame.xforms.get_mut(i) {
+            if j < xf.mod_weights.len() {
+                xf.mod_weights[j] = v.max(0.0);
+            }
+        }
+    }
+
     /// Render at the given size, returning RGBA8 bytes (length w*h*4).
     ///
     /// Width/height override the genome so the UI can render previews cheaply

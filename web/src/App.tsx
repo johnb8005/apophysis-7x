@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Download, Flame, FolderOpen, RefreshCw, Save, X } from "lucide-react";
+import { AlertTriangle, Download, Flame, FolderOpen, PanelRight, RefreshCw, Save, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ParamSlider } from "@/components/ParamSlider";
 import { PaletteStrip } from "@/components/PaletteStrip";
+import { EditorPanel } from "@/components/EditorPanel";
+import { TriangleCanvas, type Coefs } from "@/components/TriangleCanvas";
 import { Viewport } from "@/components/Viewport";
 import { useFlame } from "@/hooks/useFlame";
 import { DEFAULT_PARAMS, DEMOS, PREVIEW_QUALITY, type FlameParams } from "@/lib/types";
@@ -16,16 +18,33 @@ export default function App() {
   const [paletteIndex, setPaletteIndex] = useState(0);
 
   const flame = useFlame();
-  const { render, loadDemo, loadFile, save, setPalette, info } = flame;
+  const { render, loadDemo, loadFile, save, setPalette, info, loadVariationNames } = flame;
+  const [selectedXform, setSelectedXform] = useState(0);
+  const [showEditor, setShowEditor] = useState(true);
+  /** Coefs mid-drag, before the worker echoes them back. */
+  const [draftCoefs, setDraftCoefs] = useState<Record<number, Coefs>>({});
 
   /** True while a slider is being dragged — drops quality so it stays live. */
   const [interacting, setInteracting] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  // Load the initial demo once the worker is up.
+  // Load the initial demo and the variation list once the worker is up.
   useEffect(() => {
     loadDemo("sierpinski");
-  }, [loadDemo]);
+    loadVariationNames();
+  }, [loadDemo, loadVariationNames]);
+
+  // Keep the selection in range when transforms are added or removed.
+  useEffect(() => {
+    if (selectedXform >= flame.xforms.length && flame.xforms.length > 0) {
+      setSelectedXform(flame.xforms.length - 1);
+    }
+  }, [flame.xforms.length, selectedXform]);
+
+  // The worker's echo is authoritative; drop drafts once it arrives.
+  useEffect(() => {
+    setDraftCoefs({});
+  }, [flame.xforms]);
 
   // Re-render on any parameter change. During interaction, render at low
   // quality; the full-quality frame lands when the drag ends.
@@ -110,6 +129,44 @@ export default function App() {
     [setPalette, render, params],
   );
 
+  // Triangle coefs: the in-flight draft wins so dragging stays smooth.
+  const canvasCoefs: Coefs[] = flame.xforms.map(
+    (x, i) => draftCoefs[i] ?? (x.coefs as Coefs),
+  );
+
+  const onCoefsChange = useCallback(
+    (i: number, next: Coefs, committing: boolean) => {
+      setDraftCoefs((d) => ({ ...d, [i]: next }));
+      flame.setCoefs(i, next);
+      if (committing) {
+        setInteracting(false);
+        flame.refreshXforms();
+        render(params);
+      } else {
+        setInteracting(true);
+        render({ ...params, quality: PREVIEW_QUALITY });
+      }
+    },
+    [flame, params, render],
+  );
+
+  const onVariationChange = useCallback(
+    (i: number, name: string, weight: number) => {
+      flame.setVariation(i, name, weight);
+      flame.refreshXforms();
+      render(params);
+    },
+    [flame, params, render],
+  );
+
+  const onFieldChange = useCallback(
+    (i: number, field: Parameters<typeof flame.setXformField>[1], value: number) => {
+      flame.setXformField(i, field, value);
+      render(interacting ? { ...params, quality: PREVIEW_QUALITY } : params);
+    },
+    [flame, params, render, interacting],
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--color-border)] px-3">
@@ -169,6 +226,15 @@ export default function App() {
             <Download className="h-3.5 w-3.5" />
             PNG
           </Button>
+          <Button
+            size="sm"
+            variant={showEditor ? "default" : "ghost"}
+            onClick={() => setShowEditor((v) => !v)}
+            title="Toggle transform editor"
+          >
+            <PanelRight className="h-3.5 w-3.5" />
+            Editor
+          </Button>
         </div>
       </header>
 
@@ -191,18 +257,56 @@ export default function App() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <main className="min-w-0 flex-1">
-          <Viewport bitmap={flame.bitmap} rendering={flame.rendering} error={flame.error} />
+        <main className="flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1">
+            <Viewport bitmap={flame.bitmap} rendering={flame.rendering} error={flame.error} />
+          </div>
+          {showEditor && (
+            <div className="h-64 shrink-0 border-t border-[var(--color-border)] p-2">
+              <TriangleCanvas
+                coefs={canvasCoefs}
+                selected={selectedXform}
+                onSelect={setSelectedXform}
+                onChange={onCoefsChange}
+              />
+            </div>
+          )}
         </main>
 
         <aside className="w-80 shrink-0 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-card)] p-3">
-          <Tabs defaultValue="camera">
+          <Tabs defaultValue="editor">
             <TabsList>
+              <TabsTrigger value="editor">Editor</TabsTrigger>
               <TabsTrigger value="camera">Camera</TabsTrigger>
               <TabsTrigger value="render">Render</TabsTrigger>
               <TabsTrigger value="gradient">Gradient</TabsTrigger>
               <TabsTrigger value="quality">Quality</TabsTrigger>
             </TabsList>
+
+            <TabsContent value="editor">
+              <EditorPanel
+                xforms={flame.xforms}
+                selected={selectedXform}
+                variationNames={flame.variationNames}
+                onSelect={setSelectedXform}
+                onAdd={() => {
+                  flame.addXform();
+                  render(params);
+                }}
+                onDuplicate={(i) => {
+                  flame.duplicateXform(i);
+                  render(params);
+                }}
+                onDelete={(i) => {
+                  flame.deleteXform(i);
+                  render(params);
+                }}
+                onField={onFieldChange}
+                onCoefs={(i, c, committing) => onCoefsChange(i, c as Coefs, committing)}
+                onVariation={onVariationChange}
+                onInteract={setInteracting}
+              />
+            </TabsContent>
 
             <TabsContent value="camera" className="space-y-4">
               <ParamSlider label="Zoom" value={params.zoom} min={-4} max={4} step={0.05}

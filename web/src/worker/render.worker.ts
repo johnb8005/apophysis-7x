@@ -3,11 +3,22 @@
 // Rendering runs here rather than on the main thread: a full-quality frame
 // takes ~1s, which would freeze every slider drag.
 
-import init, { FlameHandle, flameWarnings } from "@/wasm/flame_core";
+import init, { FlameHandle, flameWarnings, variationNames } from "@/wasm/flame_core";
 import wasmUrl from "@/wasm/flame_core_bg.wasm?url";
 import type { FlameInfo, FlameParams, WorkerRequest, WorkerResponse } from "@/lib/types";
 
-let ready = false;
+/**
+ * The in-flight (or completed) module initialisation.
+ *
+ * This MUST be a memoised promise rather than a boolean flag. `init()` is
+ * async, so with a flag every message that arrives before the first init
+ * resolves sees `ready === false` and starts its own init. Each extra
+ * instantiation gets FRESH linear memory, which silently invalidates every
+ * pointer handed out by the earlier instance — the next property set then
+ * traps with "memory access out of bounds". The app opens by firing three
+ * messages at once, so this raced every time.
+ */
+let initPromise: Promise<void> | null = null;
 let handle: FlameHandle | null = null;
 /** The 701-palette blob, fetched once on demand. */
 let palettes: Uint8Array | null = null;
@@ -16,19 +27,30 @@ function post(msg: WorkerResponse, transfer?: Transferable[]) {
   (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer ?? []);
 }
 
-async function ensureReady() {
-  if (ready) return;
-  await init({ module_or_path: wasmUrl });
-  ready = true;
-  post({ type: "ready" });
+function ensureReady(): Promise<void> {
+  if (!initPromise) {
+    initPromise = init({ module_or_path: wasmUrl }).then(() => {
+      post({ type: "ready" });
+    });
+  }
+  return initPromise;
 }
 
-async function ensurePalettes(): Promise<Uint8Array> {
-  if (palettes) return palettes;
-  // Side-loaded rather than baked into the wasm — it is 538 KB.
-  const res = await fetch(new URL("palettes.bin", self.location.href).href);
-  palettes = new Uint8Array(await res.arrayBuffer());
-  return palettes;
+let palettePromise: Promise<Uint8Array> | null = null;
+
+function ensurePalettes(): Promise<Uint8Array> {
+  // Memoised for the same reason as ensureReady: concurrent callers must
+  // share one fetch rather than each starting their own.
+  if (!palettePromise) {
+    // Side-loaded rather than baked into the wasm — it is 538 KB.
+    palettePromise = fetch(new URL("palettes.bin", self.location.href).href)
+      .then((r) => r.arrayBuffer())
+      .then((b) => {
+        palettes = new Uint8Array(b);
+        return palettes;
+      });
+  }
+  return palettePromise;
 }
 
 function apply(h: FlameHandle, p: FlameParams) {
@@ -46,6 +68,27 @@ function apply(h: FlameHandle, p: FlameParams) {
   h.quality = p.quality;
   h.oversample = p.oversample;
   h.filterRadius = p.filterRadius;
+}
+
+/** Per-transform state the editor needs. */
+function readXforms(h: FlameHandle) {
+  const out = [];
+  for (let i = 0; i < h.xformCount; i++) {
+    const flat = Array.from(h.xformVariations(i));
+    const vars: { name: string; weight: number }[] = [];
+    for (let k = 0; k < flat.length; k += 2) {
+      vars.push({ name: flat[k], weight: Number(flat[k + 1]) });
+    }
+    out.push({
+      coefs: Array.from(h.xformCoefs(i)) as [number, number, number, number, number, number],
+      weight: h.xformWeight(i),
+      color: h.xformColor(i),
+      opacity: h.xformOpacity(i),
+      symmetry: h.xformSymmetry(i),
+      vars,
+    });
+  }
+  return out;
 }
 
 /** Read the flame's own settings back out, so loading a file updates the UI. */
@@ -83,6 +126,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       case "loadDemo": {
         handle = new FlameHandle(msg.name);
         post({ type: "loaded", id: msg.id, info: readInfo(handle, 512, 512), warnings: [] });
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         return;
       }
 
@@ -100,6 +144,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           info: readInfo(handle, 512, 512),
           warnings,
         });
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         return;
       }
 
@@ -120,6 +165,55 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       case "setVariation": {
         if (!handle) return;
         handle.setXformVariation(msg.xform, msg.name, msg.weight);
+        return;
+      }
+
+      case "setCoefs": {
+        if (!handle) return;
+        const c = msg.coefs;
+        handle.setXformCoefs(msg.xform, c[0], c[1], c[2], c[3], c[4], c[5]);
+        return;
+      }
+
+      case "addXform": {
+        if (!handle) return;
+        handle.addXform();
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "deleteXform": {
+        if (!handle) return;
+        handle.deleteXform(msg.xform);
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "duplicateXform": {
+        if (!handle) return;
+        handle.duplicateXform(msg.xform);
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "getXforms": {
+        if (!handle) return;
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "setXformField": {
+        if (!handle) return;
+        if (msg.field === "weight") handle.setXformWeight(msg.xform, msg.value);
+        else if (msg.field === "color") handle.setXformColor(msg.xform, msg.value);
+        else if (msg.field === "opacity") handle.setXformOpacity(msg.xform, msg.value);
+        else if (msg.field === "symmetry") handle.setXformSymmetry(msg.xform, msg.value);
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "variationNames": {
+        post({ type: "variationNames", id: msg.id, names: Array.from(variationNames()) });
         return;
       }
 
@@ -148,6 +242,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
       }
     }
   } catch (e) {
-    post({ type: "error", id: msg.id, message: e instanceof Error ? e.message : String(e) });
+    const detail = e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : String(e);
+    post({ type: "error", id: msg.id, message: `[${msg.type}] ${detail}` });
   }
 };

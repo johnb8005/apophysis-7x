@@ -55,13 +55,32 @@ export interface FlameInfo {
   params: FlameParams;
 }
 
+/** One transform, as the editor sees it. */
+export interface XformInfo {
+  coefs: [number, number, number, number, number, number];
+  weight: number;
+  color: number;
+  opacity: number;
+  symmetry: number;
+  vars: { name: string; weight: number }[];
+}
+
+export type XformField = "weight" | "color" | "opacity" | "symmetry";
+
 export type WorkerRequest =
   | { type: "loadDemo"; id: number; name: string }
   | { type: "loadFile"; id: number; xml: string; index: number }
   | { type: "render"; id: number; params: FlameParams }
   | { type: "save"; id: number }
   | { type: "setPalette"; id: number; index: number }
-  | { type: "setVariation"; id: number; xform: number; name: string; weight: number };
+  | { type: "setVariation"; id: number; xform: number; name: string; weight: number }
+  | { type: "setCoefs"; id: number; xform: number; coefs: number[] }
+  | { type: "addXform"; id: number }
+  | { type: "deleteXform"; id: number; xform: number }
+  | { type: "duplicateXform"; id: number; xform: number }
+  | { type: "getXforms"; id: number }
+  | { type: "setXformField"; id: number; xform: number; field: XformField; value: number }
+  | { type: "variationNames"; id: number };
 
 export type WorkerResponse =
   | { type: "ready" }
@@ -69,6 +88,8 @@ export type WorkerResponse =
   | { type: "done"; id: number; width: number; height: number; pixels: ArrayBuffer; ms: number }
   | { type: "saved"; id: number; xml: string }
   | { type: "palette"; id: number; rgb: number[] }
+  | { type: "xforms"; id: number; xforms: XformInfo[] }
+  | { type: "variationNames"; id: number; names: string[] }
   | { type: "error"; id: number; message: string };
 
 /**
