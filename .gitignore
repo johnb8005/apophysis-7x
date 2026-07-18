@@ -68,3 +68,9 @@ __recovery/
 # Boss dependency manager vendor folder https://github.com/HashLoad/boss
 modules/
 target/
+# --- Browser port ---
+crates/*/target/
+web/node_modules/
+web/dist/
+web/src/wasm/
+web/*.tsbuildinfo

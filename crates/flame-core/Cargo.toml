@@ -1,0 +1,20 @@
+[package]
+name = "flame-core"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-or-later"
+description = "Fractal flame renderer, ported from Apophysis 7X"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[dev-dependencies]
+png = "0.17"
