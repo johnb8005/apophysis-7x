@@ -184,6 +184,10 @@ export function useFlame() {
     (xform: number, coefs: number[]) => send({ type: "setCoefs", xform, coefs }),
     [send],
   );
+  const setPost = useCallback(
+    (xform: number, coefs: number[]) => send({ type: "setPost", xform, coefs }),
+    [send],
+  );
   const addXform = useCallback(() => send({ type: "addXform" }), [send]);
   const deleteXform = useCallback((xform: number) => send({ type: "deleteXform", xform }), [send]);
   const duplicateXform = useCallback(
@@ -226,6 +230,7 @@ export function useFlame() {
     setPalette,
     setVariation,
     setCoefs,
+    setPost,
     addXform,
     deleteXform,
     duplicateXform,

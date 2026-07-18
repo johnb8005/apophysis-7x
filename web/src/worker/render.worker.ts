@@ -101,6 +101,7 @@ function readXforms(h: FlameHandle) {
 
     out.push({
       coefs: Array.from(h.xformCoefs(i)) as [number, number, number, number, number, number],
+      post: Array.from(h.xformPost(i)) as [number, number, number, number, number, number],
       weight: h.xformWeight(i),
       color: h.xformColor(i),
       opacity: h.xformOpacity(i),
@@ -194,6 +195,14 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         if (!handle) return;
         const c = msg.coefs;
         handle.setXformCoefs(msg.xform, c[0], c[1], c[2], c[3], c[4], c[5]);
+        return;
+      }
+
+      case "setPost": {
+        if (!handle) return;
+        const c = msg.coefs;
+        handle.setXformPost(msg.xform, c[0], c[1], c[2], c[3], c[4], c[5]);
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         return;
       }
 

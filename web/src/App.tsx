@@ -21,7 +21,13 @@ import { MutationGrid } from "@/components/MutationGrid";
 import { TriangleCanvas, type Coefs } from "@/components/TriangleCanvas";
 import { Viewport, type MouseMode } from "@/components/Viewport";
 import { useFlame } from "@/hooks/useFlame";
-import { DEFAULT_PARAMS, DEMOS, PREVIEW_QUALITY, type FlameParams } from "@/lib/types";
+import {
+  DEFAULT_PARAMS,
+  DEMOS,
+  OUTPUT_SIZES,
+  PREVIEW_QUALITY,
+  type FlameParams,
+} from "@/lib/types";
 
 export default function App() {
   const [params, setParams] = useState<FlameParams>(DEFAULT_PARAMS);
@@ -402,6 +408,11 @@ export default function App() {
                 }}
                 onField={onFieldChange}
                 onCoefs={(i, c, committing) => onCoefsChange(i, c as Coefs, committing)}
+                onPost={(i, c) => {
+                  void pushUndo();
+                  flame.setPost(i, c);
+                  render(params);
+                }}
                 onVariation={onVariationChange}
                 onParam={(i, variation, param, value) => {
                   flame.setXformParam(i, variation, param, value);
@@ -478,6 +489,28 @@ export default function App() {
             </TabsContent>
 
             <TabsContent value="quality" className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">Output size</label>
+                <select
+                  value={`${params.width}x${params.height}`}
+                  onChange={(e) => {
+                    const [w, h] = e.target.value.split("x").map(Number);
+                    setParams((p) => ({ ...p, width: w, height: h }));
+                  }}
+                  className="h-8 w-full rounded border border-[var(--color-input)] bg-[var(--color-card)] px-2 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                >
+                  {OUTPUT_SIZES.map((s) => (
+                    <option key={s.label} value={`${s.w}x${s.h}`}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-[var(--color-muted-foreground)]">
+                  Larger sizes take proportionally longer — 1080p at high quality is a minute or
+                  more single-threaded.
+                </p>
+              </div>
+
               <ParamSlider label="Quality" value={params.quality} min={1} max={500} step={1} precision={0}
                 onChange={(v) => set("quality", v)} onInteract={setInteracting}
                 hint="Sample density. Higher is cleaner and slower." />

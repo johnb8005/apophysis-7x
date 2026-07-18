@@ -58,6 +58,8 @@ export interface FlameInfo {
 /** One transform, as the editor sees it. */
 export interface XformInfo {
   coefs: [number, number, number, number, number, number];
+  /** Post transform, applied after the variations. Identity by default. */
+  post: [number, number, number, number, number, number];
   weight: number;
   color: number;
   opacity: number;
@@ -79,6 +81,7 @@ export type WorkerRequest =
   | { type: "setPalette"; id: number; index: number }
   | { type: "setVariation"; id: number; xform: number; name: string; weight: number }
   | { type: "setCoefs"; id: number; xform: number; coefs: number[] }
+  | { type: "setPost"; id: number; xform: number; coefs: number[] }
   | { type: "addXform"; id: number }
   | { type: "deleteXform"; id: number; xform: number }
   | { type: "duplicateXform"; id: number; xform: number }
@@ -126,3 +129,12 @@ export const TRENDS: { value: string; label: string }[] = [
  * is far too slow to run per pointer-move.
  */
 export const PREVIEW_QUALITY = 8;
+
+/** Output sizes offered by the render panel. */
+export const OUTPUT_SIZES: { label: string; w: number; h: number }[] = [
+  { label: "512 × 512", w: 512, h: 512 },
+  { label: "800 × 600", w: 800, h: 600 },
+  { label: "1024 × 1024", w: 1024, h: 1024 },
+  { label: "1280 × 720", w: 1280, h: 720 },
+  { label: "1920 × 1080", w: 1920, h: 1080 },
+];

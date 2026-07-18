@@ -16,6 +16,7 @@ interface EditorPanelProps {
   onDelete: (i: number) => void;
   onField: (i: number, field: XformField, value: number) => void;
   onCoefs: (i: number, coefs: number[], committing: boolean) => void;
+  onPost: (i: number, coefs: number[]) => void;
   onVariation: (i: number, name: string, weight: number) => void;
   onParam: (i: number, variation: string, param: string, value: number) => void;
   onChaos: (i: number, to: number, value: number) => void;
@@ -36,6 +37,7 @@ export function EditorPanel({
   onDelete,
   onField,
   onCoefs,
+  onPost,
   onVariation,
   onParam,
   onChaos,
@@ -286,6 +288,43 @@ export function EditorPanel({
               onClick={() => onCoefs(selected, [1, 0, 0, 1, 0, 0], true)}
             >
               Reset to identity
+            </Button>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[10px] leading-relaxed text-[var(--color-muted-foreground)]">
+              Post transform, applied after the variations. Note it does not touch z, matching
+              the original.
+            </p>
+            <div className="grid grid-cols-2 gap-1.5">
+              {coefLabels.map((label, k) => (
+                <div key={label} className="flex items-center gap-1.5">
+                  <span className="w-3 text-[11px] text-[var(--color-muted-foreground)]">
+                    {label}
+                  </span>
+                  <input
+                    type="number"
+                    step={0.01}
+                    value={Number((xf.post?.[k] ?? (k === 0 || k === 3 ? 1 : 0)).toFixed(6))}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      if (!Number.isFinite(v)) return;
+                      const next = [...(xf.post ?? [1, 0, 0, 1, 0, 0])];
+                      next[k] = v;
+                      onPost(selected, next);
+                    }}
+                    className="tabular h-6 w-full rounded border border-[var(--color-input)] bg-transparent px-1 text-right text-[11px] focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                  />
+                </div>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2 w-full"
+              onClick={() => onPost(selected, [1, 0, 0, 1, 0, 0])}
+            >
+              Reset post transform
             </Button>
           </div>
 
