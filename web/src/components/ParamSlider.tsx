@@ -10,6 +10,12 @@ interface ParamSliderProps {
   onChange: (v: number) => void;
   /** Shown under the label — use for units or a one-line explanation. */
   hint?: string;
+  /**
+   * Called with true while the user is dragging. The app renders at reduced
+   * quality during interaction and refines on release, because a full render
+   * takes about a second.
+   */
+  onInteract?: (active: boolean) => void;
 }
 
 /**
@@ -25,6 +31,7 @@ export function ParamSlider({
   precision = 2,
   onChange,
   hint,
+  onInteract,
 }: ParamSliderProps) {
   return (
     <div className="space-y-1.5">
@@ -49,6 +56,11 @@ export function ParamSlider({
         max={max}
         step={step}
         onValueChange={([v]) => onChange(v)}
+        onPointerDown={() => onInteract?.(true)}
+        onPointerUp={() => onInteract?.(false)}
+        onKeyDown={() => onInteract?.(true)}
+        onKeyUp={() => onInteract?.(false)}
+        onBlur={() => onInteract?.(false)}
       />
       {hint && <p className="text-[10px] text-[var(--color-muted-foreground)]">{hint}</p>}
     </div>

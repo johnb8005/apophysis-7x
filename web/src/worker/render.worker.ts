@@ -1,27 +1,34 @@
 /// <reference lib="webworker" />
 //
-// Rendering runs here rather than on the main thread: a 512x512 frame at
-// quality 100 takes well over a second, which would freeze every slider drag.
+// Rendering runs here rather than on the main thread: a full-quality frame
+// takes ~1s, which would freeze every slider drag.
 
-import init, { FlameHandle } from "@/wasm/flame_core";
+import init, { FlameHandle, flameWarnings } from "@/wasm/flame_core";
 import wasmUrl from "@/wasm/flame_core_bg.wasm?url";
-import type { FlameParams, RenderRequest, RenderResponse } from "@/lib/types";
+import type { FlameInfo, FlameParams, WorkerRequest, WorkerResponse } from "@/lib/types";
 
 let ready = false;
-/** One handle per demo, so switching back preserves nothing but costs nothing. */
-const handles = new Map<string, FlameHandle>();
+let handle: FlameHandle | null = null;
+/** The 701-palette blob, fetched once on demand. */
+let palettes: Uint8Array | null = null;
 
-function post(msg: RenderResponse, transfer?: Transferable[]) {
+function post(msg: WorkerResponse, transfer?: Transferable[]) {
   (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer ?? []);
 }
 
-function handleFor(demo: string): FlameHandle {
-  let h = handles.get(demo);
-  if (!h) {
-    h = new FlameHandle(demo);
-    handles.set(demo, h);
-  }
-  return h;
+async function ensureReady() {
+  if (ready) return;
+  await init({ module_or_path: wasmUrl });
+  ready = true;
+  post({ type: "ready" });
+}
+
+async function ensurePalettes(): Promise<Uint8Array> {
+  if (palettes) return palettes;
+  // Side-loaded rather than baked into the wasm — it is 538 KB.
+  const res = await fetch(new URL("palettes.bin", self.location.href).href);
+  palettes = new Uint8Array(await res.arrayBuffer());
+  return palettes;
 }
 
 function apply(h: FlameHandle, p: FlameParams) {
@@ -41,37 +48,105 @@ function apply(h: FlameHandle, p: FlameParams) {
   h.filterRadius = p.filterRadius;
 }
 
-self.onmessage = async (ev: MessageEvent<RenderRequest>) => {
+/** Read the flame's own settings back out, so loading a file updates the UI. */
+function readInfo(h: FlameHandle, width: number, height: number): FlameInfo {
+  return {
+    name: h.name,
+    xformCount: h.xformCount,
+    hasFinalXform: h.hasFinalXform,
+    params: {
+      width,
+      height,
+      zoom: h.zoom,
+      scale: h.scale,
+      angle: h.angle,
+      centerX: h.centerX,
+      centerY: h.centerY,
+      brightness: h.brightness,
+      gamma: h.gamma,
+      vibrancy: h.vibrancy,
+      gammaThreshold: h.gammaThreshold,
+      background: [0, 0, 0],
+      quality: h.quality,
+      oversample: h.oversample,
+      filterRadius: h.filterRadius,
+    },
+  };
+}
+
+self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
-  if (msg.type !== "render") return;
-
   try {
-    if (!ready) {
-      await init({ module_or_path: wasmUrl });
-      ready = true;
-      post({ type: "ready" });
+    await ensureReady();
+
+    switch (msg.type) {
+      case "loadDemo": {
+        handle = new FlameHandle(msg.name);
+        post({ type: "loaded", id: msg.id, info: readInfo(handle, 512, 512), warnings: [] });
+        return;
+      }
+
+      case "loadFile": {
+        const warnings = Array.from(flameWarnings(msg.xml));
+        const h = FlameHandle.fromFlameFile(msg.xml, msg.index);
+        if (!h) {
+          post({ type: "error", id: msg.id, message: "No flame found in that file." });
+          return;
+        }
+        handle = h;
+        post({
+          type: "loaded",
+          id: msg.id,
+          info: readInfo(handle, 512, 512),
+          warnings,
+        });
+        return;
+      }
+
+      case "save": {
+        if (!handle) return;
+        post({ type: "saved", id: msg.id, xml: handle.toFlameFile() });
+        return;
+      }
+
+      case "setPalette": {
+        if (!handle) return;
+        const blob = await ensurePalettes();
+        handle.setPaletteFromBlob(blob, msg.index);
+        post({ type: "palette", id: msg.id, rgb: Array.from(handle.paletteBytes()) });
+        return;
+      }
+
+      case "setVariation": {
+        if (!handle) return;
+        handle.setXformVariation(msg.xform, msg.name, msg.weight);
+        return;
+      }
+
+      case "render": {
+        if (!handle) handle = new FlameHandle("sierpinski");
+        apply(handle, msg.params);
+
+        const t0 = performance.now();
+        const pixels = handle.render(msg.params.width, msg.params.height);
+        const ms = performance.now() - t0;
+
+        // Transfer rather than copy — at 1080p this is ~8 MB.
+        const buf = pixels.buffer as ArrayBuffer;
+        post(
+          {
+            type: "done",
+            id: msg.id,
+            width: msg.params.width,
+            height: msg.params.height,
+            pixels: buf,
+            ms,
+          },
+          [buf],
+        );
+        return;
+      }
     }
-
-    const h = handleFor(msg.params.demo);
-    apply(h, msg.params);
-
-    const t0 = performance.now();
-    const pixels = h.render(msg.params.width, msg.params.height);
-    const ms = performance.now() - t0;
-
-    // Transfer rather than copy — at 1080p this buffer is ~8 MB.
-    const buf = pixels.buffer as ArrayBuffer;
-    post(
-      {
-        type: "done",
-        id: msg.id,
-        width: msg.params.width,
-        height: msg.params.height,
-        pixels: buf,
-        ms,
-      },
-      [buf],
-    );
   } catch (e) {
     post({ type: "error", id: msg.id, message: e instanceof Error ? e.message : String(e) });
   }

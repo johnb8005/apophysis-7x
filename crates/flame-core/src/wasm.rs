@@ -118,6 +118,86 @@ impl FlameHandle {
         FlameHandle { flame: demo(name), seed: 0x5EED }
     }
 
+    /// Parse a `.flame` document and take the flame at `index`.
+    #[wasm_bindgen(js_name = fromFlameFile)]
+    pub fn from_flame_file(text: &str, index: usize) -> Option<FlameHandle> {
+        let mut result = crate::load::load(text);
+        if index >= result.flames.len() {
+            return None;
+        }
+        Some(FlameHandle { flame: result.flames.swap_remove(index), seed: 0x5EED })
+    }
+
+    /// Serialise back to a `.flame` document.
+    #[wasm_bindgen(js_name = toFlameFile)]
+    pub fn to_flame_file(&self) -> String {
+        let title = if self.flame.name.is_empty() { "untitled" } else { &self.flame.name };
+        crate::save::write_document(core::slice::from_ref(&self.flame), title)
+    }
+
+    /// Replace the palette from a slice of the 701-palette blob.
+    ///
+    /// `blob` is the raw `palettes.bin` (701 * 256 * 3 bytes); `index` selects
+    /// one. Kept out of the wasm binary and side-loaded so the module stays
+    /// small.
+    #[wasm_bindgen(js_name = setPaletteFromBlob)]
+    pub fn set_palette_from_blob(&mut self, blob: &[u8], index: usize) -> bool {
+        let start = index * 256 * 3;
+        let end = start + 256 * 3;
+        if end > blob.len() {
+            return false;
+        }
+        self.flame.palette =
+            Palette(blob[start..end].chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect());
+        true
+    }
+
+    #[wasm_bindgen(js_name = hasFinalXform, getter)]
+    pub fn has_final_xform(&self) -> bool {
+        self.flame.final_xform.is_some() && self.flame.final_enabled
+    }
+
+    /// Variations on transform `i` as `[name, weight, name, weight, ...]` —
+    /// wasm-bindgen has no clean tuple return and the UI zips them apart.
+    #[wasm_bindgen(js_name = xformVariations)]
+    pub fn xform_variations(&self, i: usize) -> Vec<String> {
+        match self.flame.xforms.get(i) {
+            Some(xf) => xf
+                .variations()
+                .iter()
+                .flat_map(|(v, w)| [v.name().to_string(), w.to_string()])
+                .collect(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Set a variation's weight on transform `i`, attaching it if absent.
+    #[wasm_bindgen(js_name = setXformVariation)]
+    pub fn set_xform_variation(&mut self, i: usize, name: &str, weight: f64) -> bool {
+        let Some(xf) = self.flame.xforms.get_mut(i) else { return false };
+        if xf.set_weight(name, weight) {
+            return true;
+        }
+        match crate::registry::create(name) {
+            Some(v) => {
+                xf.set_variation(v, weight);
+                true
+            }
+            None => false,
+        }
+    }
+
+    #[wasm_bindgen(js_name = xformParam)]
+    pub fn xform_param(&self, i: usize, var: &str, param: &str) -> Option<f64> {
+        self.flame.xforms.get(i).and_then(|xf| xf.variation_param(var, param))
+    }
+
+    /// Returns the value actually stored — several variations coerce.
+    #[wasm_bindgen(js_name = setXformParam)]
+    pub fn set_xform_param(&mut self, i: usize, var: &str, param: &str, v: f64) -> Option<f64> {
+        self.flame.xforms.get_mut(i).and_then(|xf| xf.set_variation_param(var, param, v))
+    }
+
     /// Render at the given size, returning RGBA8 bytes (length w*h*4).
     ///
     /// Width/height override the genome so the UI can render previews cheaply
@@ -305,6 +385,23 @@ impl FlameHandle {
     pub fn name(&self) -> String {
         self.flame.name.clone()
     }
+}
+
+/// Flame names in a `.flame` document, for populating the file list.
+#[wasm_bindgen(js_name = flameNames)]
+pub fn flame_names(text: &str) -> Vec<String> {
+    crate::load::load(text).flames.iter().map(|f| f.name.clone()).collect()
+}
+
+/// Warnings produced while parsing a document — missing plugins and the like.
+/// The original shows these in its Messages window rather than failing.
+#[wasm_bindgen(js_name = flameWarnings)]
+pub fn flame_warnings(text: &str) -> Vec<String> {
+    crate::load::load(text)
+        .warnings
+        .iter()
+        .map(|w| format!("{}: {}", w.flame, w.message))
+        .collect()
 }
 
 /// Every variation name known to this build, for populating UI lists.
