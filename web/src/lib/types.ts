@@ -86,7 +86,18 @@ export type WorkerRequest =
   | { type: "setXformField"; id: number; xform: number; field: XformField; value: number }
   | { type: "variationNames"; id: number }
   | { type: "setXformParam"; id: number; xform: number; variation: string; param: string; value: number }
-  | { type: "setChaos"; id: number; xform: number; to: number; value: number };
+  | { type: "setChaos"; id: number; xform: number; to: number; value: number }
+  | {
+      type: "mutationGrid";
+      id: number;
+      trend: string;
+      amount: number;
+      seed: number;
+      size: number;
+      baseSize: number;
+      quality: number;
+    }
+  | { type: "adoptMutant"; id: number; index: number };
 
 export type WorkerResponse =
   | { type: "ready" }
@@ -96,7 +107,18 @@ export type WorkerResponse =
   | { type: "palette"; id: number; rgb: number[] }
   | { type: "xforms"; id: number; xforms: XformInfo[] }
   | { type: "variationNames"; id: number; names: string[] }
+  | { type: "mutants"; id: number; size: number; thumbs: ArrayBuffer[] }
   | { type: "error"; id: number; message: string };
+
+/** Mutation trends offered by the UI, mirroring the original's Trend combo. */
+export const TRENDS: { value: string; label: string }[] = [
+  { value: "random", label: "Random" },
+  { value: "coefs", label: "Shape" },
+  { value: "weights", label: "Weights" },
+  { value: "colors", label: "Colours" },
+  { value: "varweights", label: "Variation amounts" },
+  { value: "addvar", label: "Add variation" },
+];
 
 /**
  * Interaction renders drop quality hard so dragging stays responsive; the

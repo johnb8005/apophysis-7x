@@ -25,6 +25,8 @@ import type { FlameInfo, FlameParams, WorkerRequest, WorkerResponse } from "@/li
  */
 let initPromise: Promise<void> | null = null;
 let handle: FlameHandle | null = null;
+/** Candidates from the last mutation grid, indexed as the 3x3 layout. */
+let mutants: FlameHandle[] = [];
 /** The 701-palette blob, fetched once on demand. */
 let palettes: Uint8Array | null = null;
 
@@ -242,6 +244,39 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         else if (msg.field === "color") handle.setXformColor(msg.xform, msg.value);
         else if (msg.field === "opacity") handle.setXformOpacity(msg.xform, msg.value);
         else if (msg.field === "symmetry") handle.setXformSymmetry(msg.xform, msg.value);
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "mutationGrid": {
+        if (!handle) return;
+        // Slot 4 is the parent, so the grid reads as "the current flame,
+        // surrounded by neighbours" exactly as the original's 3x3 does.
+        mutants = [];
+        const thumbs: ArrayBuffer[] = [];
+        for (let i = 0; i < 9; i++) {
+          const h =
+            i === 4 ? handle : handle.mutated(msg.trend, msg.amount, msg.seed + i);
+          mutants.push(h);
+          h.quality = msg.quality;
+          // Scale pixels-per-unit with the thumbnail size, or a 150px thumb
+          // of a flame framed for 512px shows only a small crop of it.
+          h.scale = (h.scale * msg.size) / msg.baseSize;
+          const px = h.render(msg.size, msg.size);
+          // Restore, so adopting a mutant keeps the parent's framing.
+          h.scale = (h.scale * msg.baseSize) / msg.size;
+          thumbs.push(px.buffer as ArrayBuffer);
+        }
+        post({ type: "mutants", id: msg.id, size: msg.size, thumbs }, thumbs);
+        return;
+      }
+
+      case "adoptMutant": {
+        const chosen = mutants[msg.index];
+        if (!chosen) return;
+        handle = chosen;
+        mutants = [];
+        post({ type: "loaded", id: msg.id, info: readInfo(handle, 512, 512), warnings: [] });
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         return;
       }

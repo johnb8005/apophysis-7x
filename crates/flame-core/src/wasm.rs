@@ -297,6 +297,25 @@ impl FlameHandle {
         }
     }
 
+    /// A mutated copy, for the mutation grid.
+    ///
+    /// `trend` biases the kind of change ("coefs", "weights", "colors",
+    /// "varweights", "addvar", or anything else for random). `amount` is the
+    /// original's "Speed" control. Seeds are u32 so JS passes a plain number
+    /// rather than a BigInt.
+    #[wasm_bindgen(js_name = mutated)]
+    pub fn mutated(&self, trend: &str, amount: f64, seed: u32) -> FlameHandle {
+        FlameHandle {
+            flame: crate::mutate::mutate(
+                &self.flame,
+                crate::mutate::Trend::from_str(trend),
+                amount,
+                seed as u64,
+            ),
+            seed: self.seed,
+        }
+    }
+
     /// Render at the given size, returning RGBA8 bytes (length w*h*4).
     ///
     /// Width/height override the genome so the UI can render previews cheaply

@@ -9,6 +9,7 @@ export interface FlameState {
   warnings: string[];
   info: FlameInfo | null;
   palette: number[] | null;
+  mutants: { size: number; thumbs: ArrayBuffer[] } | null;
   xforms: XformInfo[];
   variationNames: string[];
 }
@@ -36,6 +37,7 @@ export function useFlame() {
     warnings: [],
     info: null,
     palette: null,
+    mutants: null,
     xforms: [],
     variationNames: [],
   });
@@ -105,6 +107,10 @@ export function useFlame() {
 
         case "xforms":
           setState((s) => ({ ...s, xforms: msg.xforms }));
+          return;
+
+        case "mutants":
+          setState((s) => ({ ...s, mutants: { size: msg.size, thumbs: msg.thumbs } }));
           return;
 
         case "variationNames":
@@ -191,6 +197,12 @@ export function useFlame() {
     [send],
   );
   const loadVariationNames = useCallback(() => send({ type: "variationNames" }), [send]);
+  const mutationGrid = useCallback(
+    (trend: string, amount: number, seed: number, baseSize: number, size = 150, quality = 14) =>
+      send({ type: "mutationGrid", trend, amount, seed, size, baseSize, quality }),
+    [send],
+  );
+  const adoptMutant = useCallback((index: number) => send({ type: "adoptMutant", index }), [send]);
   const setXformParam = useCallback(
     (xform: number, variation: string, param: string, value: number) =>
       send({ type: "setXformParam", xform, variation, param, value }),
@@ -222,6 +234,8 @@ export function useFlame() {
     loadVariationNames,
     setXformParam,
     setChaos,
+    mutationGrid,
+    adoptMutant,
     dismissWarnings,
   };
 }

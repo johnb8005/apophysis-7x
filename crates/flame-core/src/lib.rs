@@ -14,6 +14,7 @@
 pub mod builtins;
 pub mod genome;
 pub mod load;
+pub mod mutate;
 pub mod plugins;
 pub mod registry;
 pub mod save;

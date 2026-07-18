@@ -17,6 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ParamSlider } from "@/components/ParamSlider";
 import { PaletteStrip } from "@/components/PaletteStrip";
 import { EditorPanel } from "@/components/EditorPanel";
+import { MutationGrid } from "@/components/MutationGrid";
 import { TriangleCanvas, type Coefs } from "@/components/TriangleCanvas";
 import { Viewport, type MouseMode } from "@/components/Viewport";
 import { useFlame } from "@/hooks/useFlame";
@@ -35,6 +36,9 @@ export default function App() {
   /** Coefs mid-drag, before the worker echoes them back. */
   const [draftCoefs, setDraftCoefs] = useState<Record<number, Coefs>>({});
   const [mouseMode, setMouseMode] = useState<MouseMode>("pan");
+  const [mutateAmount, setMutateAmount] = useState(0.3);
+  const [mutateTrend, setMutateTrend] = useState("random");
+  const [mutating, setMutating] = useState(false);
 
   /**
    * Undo history as .flame snapshots.
@@ -68,6 +72,10 @@ export default function App() {
   useEffect(() => {
     setDraftCoefs({});
   }, [flame.xforms]);
+
+  useEffect(() => {
+    if (flame.mutants) setMutating(false);
+  }, [flame.mutants]);
 
   // Re-render on any parameter change. During interaction, render at low
   // quality; the full-quality frame lands when the drag ends.
@@ -364,6 +372,7 @@ export default function App() {
           <Tabs defaultValue="editor">
             <TabsList>
               <TabsTrigger value="editor">Editor</TabsTrigger>
+              <TabsTrigger value="mutate">Mutate</TabsTrigger>
               <TabsTrigger value="camera">Camera</TabsTrigger>
               <TabsTrigger value="render">Render</TabsTrigger>
               <TabsTrigger value="gradient">Gradient</TabsTrigger>
@@ -403,6 +412,33 @@ export default function App() {
                   render(params);
                 }}
                 onInteract={setInteracting}
+              />
+            </TabsContent>
+
+            <TabsContent value="mutate">
+              <MutationGrid
+                mutants={flame.mutants}
+                amount={mutateAmount}
+                trend={mutateTrend}
+                generating={mutating}
+                onAmount={setMutateAmount}
+                onTrend={setMutateTrend}
+                onGenerate={() => {
+                  setMutating(true);
+                  // Seeds vary per grid so "new mutations" really is new.
+                  flame.mutationGrid(
+                    mutateTrend,
+                    mutateAmount,
+                    Math.floor(Math.random() * 1e6),
+                    params.width,
+                  );
+                }}
+                onAdopt={(i) => {
+                  if (i === 4) return;
+                  void pushUndo();
+                  flame.adoptMutant(i);
+                  render(params);
+                }}
               />
             </TabsContent>
 
