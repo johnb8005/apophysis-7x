@@ -16,6 +16,7 @@ pub mod genome;
 pub mod load;
 pub mod plugins;
 pub mod registry;
+pub mod save;
 pub mod render;
 pub mod wasm;
 pub mod xml;
