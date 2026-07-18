@@ -163,6 +163,24 @@ impl XForm {
         }
     }
 
+    /// Set a named parameter on an attached variation, e.g.
+    /// `set_variation_param("julian", "julian_power", 3.0)`.
+    ///
+    /// Returns the value actually stored, which may be coerced — several
+    /// variations round, clamp, or forbid zero. `None` means the variation is
+    /// not attached or does not declare that parameter.
+    pub fn set_variation_param(&mut self, var: &str, param: &str, value: f64) -> Option<f64> {
+        self.vars
+            .iter_mut()
+            .find(|(v, _)| v.name() == var)
+            .and_then(|(v, _)| v.set_param(param, value))
+    }
+
+    /// Read a named parameter from an attached variation.
+    pub fn variation_param(&self, var: &str, param: &str) -> Option<f64> {
+        self.vars.iter().find(|(v, _)| v.name() == var).and_then(|(v, _)| v.get_param(param))
+    }
+
     /// Adjust a variation's weight in place. Returns false if not attached.
     pub fn set_weight(&mut self, name: &str, weight: f64) -> bool {
         match self.vars.iter_mut().find(|(v, _)| v.name() == name) {

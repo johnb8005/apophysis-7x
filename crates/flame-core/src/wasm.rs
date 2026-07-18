@@ -307,8 +307,17 @@ impl FlameHandle {
     }
 }
 
-/// Names of the built-in variations, for populating UI lists.
-#[wasm_bindgen(js_name = builtinVariationNames)]
-pub fn builtin_variation_names() -> Vec<String> {
-    crate::builtins::BUILTIN_NAMES.iter().map(|s| s.to_string()).collect()
+/// Every variation name known to this build, for populating UI lists.
+#[wasm_bindgen(js_name = variationNames)]
+pub fn variation_names() -> Vec<String> {
+    crate::registry::all_names().iter().map(|s| s.to_string()).collect()
+}
+
+/// The parameter names a given variation declares, e.g. `julian_power`.
+#[wasm_bindgen(js_name = variationParams)]
+pub fn variation_params(name: &str) -> Vec<String> {
+    match crate::registry::create(name) {
+        Some(v) => v.param_names().iter().map(|s| s.to_string()).collect(),
+        None => Vec::new(),
+    }
 }

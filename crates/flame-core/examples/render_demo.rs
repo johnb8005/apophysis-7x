@@ -110,10 +110,60 @@ fn spherical_swirl() -> Flame {
     flame
 }
 
+/// Exercises the ported plugin variations: julian (dispatch kernel),
+/// pre_spherical (a pre_ pass that overwrites FT), and curl.
+fn plugin_showcase() -> Flame {
+    use flame_core::registry;
+
+    let mk = |vars: Vec<(&str, f64)>, coefs: Affine, color: f64, density: f64| {
+        let mut xf = XForm::default();
+        xf.coefs = coefs;
+        xf.density = density;
+        xf.color = color;
+        let built: Vec<(Box<dyn Variation>, f64)> = vars
+            .into_iter()
+            .map(|(n, w)| {
+                (registry::create(n).unwrap_or_else(|| panic!("unknown variation {n}")), w)
+            })
+            .collect();
+        xf.set_variations(built);
+        xf
+    };
+
+    let mut a = mk(
+        vec![("julian", 1.0), ("pre_spherical", 1.0)],
+        Affine { a: 0.9, b: 0.4, c: -0.4, d: 0.9, e: 0.1, f: 0.0 },
+        0.0,
+        1.0,
+    );
+    // julian_power = 3 exercises the generic kernel, not a specialisation.
+    a.set_variation_param("julian", "julian_power", 3.0);
+
+    let b = mk(
+        vec![("curl", 1.0)],
+        Affine { a: 0.6, b: 0.0, c: 0.0, d: 0.6, e: -0.4, f: 0.2 },
+        1.0,
+        0.5,
+    );
+
+    let mut flame = Flame::default();
+    flame.xforms = vec![a, b];
+    flame.width = 512;
+    flame.height = 512;
+    flame.center = [0.0, 0.0];
+    flame.pixels_per_unit = 160.0;
+    flame.brightness = 4.0;
+    flame.gamma = 4.0;
+    flame.sample_density = 120.0;
+    flame.palette = fire_palette();
+    flame.name = "plugin_showcase".into();
+    flame
+}
+
 fn main() {
     let outdir = std::env::args().nth(1).unwrap_or_else(|| ".".into());
 
-    for mut flame in [sierpinski(), spherical_swirl()] {
+    for mut flame in [sierpinski(), spherical_swirl(), plugin_showcase()] {
         let name = flame.name.clone();
         let mut rng = Rng::new(0x5EED);
         flame.prepare(&mut rng);

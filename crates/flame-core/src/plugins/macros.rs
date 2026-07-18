@@ -37,6 +37,7 @@ macro_rules! variation {
             $( $pname:literal => $pfield:ident = $pdefault:expr
                $(, coerce = $pcoerce:expr )?
                $(, reset = $preset:expr )?
+               $(, reset_fn = $presetfn:expr )?
             ),* $(,)?
         }
         state { $( $sfield:ident : $stype:ty = $sdefault:expr ),* $(,)? }
@@ -106,6 +107,9 @@ macro_rules! variation {
                             #[allow(unused_mut, unused_assignments)]
                             let mut v = 0.0;
                             $( v = $preset; )?
+                            // reset_fn sees the current value: several
+                            // variations toggle a sign rather than zeroing.
+                            $( v = ($presetfn)(self.$pfield); )?
                             self.$pfield = v;
                             Some(v)
                         }

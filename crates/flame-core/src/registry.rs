@@ -91,3 +91,16 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod count_tests {
+    use super::*;
+
+    /// 29 built-ins plus the 47 plugin variations ported from src/Variations/.
+    #[test]
+    fn full_variation_count() {
+        assert_eq!(crate::builtins::BUILTIN_NAMES.len(), 29, "builtin count");
+        assert_eq!(crate::plugins::count(), 47, "plugin count");
+        assert_eq!(all_names().len(), 76, "total");
+    }
+}

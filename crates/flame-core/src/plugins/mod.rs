@@ -10,20 +10,52 @@
 mod macros;
 
 mod bwraps;
+mod crop;
+mod curl;
+mod falloff2;
+mod blur;
+mod misc_a;
+mod misc_b;
+mod misc_c;
+mod julia;
 
 use crate::variation::Variation;
+
+/// Delphi's `Math.IsZero` with its default epsilon — an approximate compare,
+/// not `== 0`. Several variations dispatch on it, so `c1 = 1e-13` really does
+/// take the "zero" branch and produce different output than `c1 = 1e-10`.
+#[inline]
+pub(crate) fn is_zero(v: f64) -> bool {
+    v.abs() <= 1e-12
+}
 
 /// Build a plugin variation by name. Returns `None` for unknown names, which
 /// the loader surfaces as a missing-plugin warning rather than an error — the
 /// original does the same via `MissingPlugin.pas`.
 pub fn create(name: &str) -> Option<Box<dyn Variation>> {
     bwraps::create(name)
+        .or_else(|| crop::create(name))
+        .or_else(|| curl::create(name))
+        .or_else(|| falloff2::create(name))
+        .or_else(|| julia::create(name))
+        .or_else(|| blur::create(name))
+        .or_else(|| misc_a::create(name))
+        .or_else(|| misc_b::create(name))
+        .or_else(|| misc_c::create(name))
 }
 
 /// Every plugin variation name in this build.
 pub fn names() -> Vec<&'static str> {
     let mut v = Vec::new();
     v.extend(bwraps::NAMES);
+    v.extend(crop::NAMES);
+    v.extend(curl::NAMES);
+    v.extend(falloff2::NAMES);
+    v.extend(julia::NAMES);
+    v.extend(blur::NAMES);
+    v.extend(misc_a::NAMES);
+    v.extend(misc_b::NAMES);
+    v.extend(misc_c::NAMES);
     v
 }
 
