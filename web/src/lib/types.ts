@@ -100,7 +100,10 @@ export type WorkerRequest =
       baseSize: number;
       quality: number;
     }
-  | { type: "adoptMutant"; id: number; index: number };
+  | { type: "adoptMutant"; id: number; index: number }
+  | { type: "setCurvePoint"; id: number; channel: number; index: number; x: number; y: number }
+  | { type: "resetCurve"; id: number; channel: number }
+  | { type: "getCurves"; id: number };
 
 export type WorkerResponse =
   | { type: "ready" }
@@ -111,6 +114,7 @@ export type WorkerResponse =
   | { type: "xforms"; id: number; xforms: XformInfo[] }
   | { type: "variationNames"; id: number; names: string[] }
   | { type: "mutants"; id: number; size: number; thumbs: ArrayBuffer[] }
+  | { type: "curves"; id: number; values: number[] }
   | { type: "error"; id: number; message: string };
 
 /** Mutation trends offered by the UI, mirroring the original's Trend combo. */

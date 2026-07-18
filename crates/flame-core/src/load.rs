@@ -203,6 +203,18 @@ fn load_flame(el: &Element) -> (Flame, Vec<LoadWarning>) {
         }
     }
 
+    // 4 channels x 4 points x (x, y, weight).
+    if let Some(vals) = el.attr_floats("curves") {
+        if let Some(c) = crate::curves::parse(&vals) {
+            f.curves = c;
+        } else if !vals.is_empty() {
+            warnings.push(LoadWarning {
+                flame: f.name.clone(),
+                message: format!("curves attribute had {} values, expected 48", vals.len()),
+            });
+        }
+    }
+
     if let Some(p) = load_palette(el, &f.name, &mut warnings) {
         f.palette = p;
     }

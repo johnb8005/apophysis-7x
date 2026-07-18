@@ -186,6 +186,9 @@ pub fn tone_map(
     // The original precomputes counts 0..1024 into a lookup table; at f64 the
     // table and the closure agree exactly, so we skip it.
 
+    // Built once per image; skipped entirely when every curve is the identity.
+    let lut = flame.curves.build_lut();
+
     let bgi = [
         flame.background[0].round(),
         flame.background[1].round(),
@@ -264,6 +267,14 @@ pub fn tone_map(
             } else {
                 [ls * fp[0], ls * fp[1], ls * fp[2]]
             };
+
+            // Curves run before the background composite, matching the
+            // original's ordering in CreateImage.
+            if lut.active() {
+                for c in 0..3 {
+                    rgb[c] = lut.apply(c, rgb[c].round());
+                }
+            }
 
             if flame.transparent {
                 // Un-premultiply rather than compositing over the background.

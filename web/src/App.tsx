@@ -18,6 +18,7 @@ import { ParamSlider } from "@/components/ParamSlider";
 import { PaletteStrip } from "@/components/PaletteStrip";
 import { EditorPanel } from "@/components/EditorPanel";
 import { MutationGrid } from "@/components/MutationGrid";
+import { CurvesEditor } from "@/components/CurvesEditor";
 import { TriangleCanvas, type Coefs } from "@/components/TriangleCanvas";
 import { Viewport, type MouseMode } from "@/components/Viewport";
 import { useFlame } from "@/hooks/useFlame";
@@ -376,12 +377,13 @@ export default function App() {
 
         <aside className="w-80 shrink-0 overflow-y-auto border-l border-[var(--color-border)] bg-[var(--color-card)] p-3">
           <Tabs defaultValue="editor">
-            <TabsList>
+            <TabsList className="h-auto flex-wrap">
               <TabsTrigger value="editor">Editor</TabsTrigger>
               <TabsTrigger value="mutate">Mutate</TabsTrigger>
               <TabsTrigger value="camera">Camera</TabsTrigger>
               <TabsTrigger value="render">Render</TabsTrigger>
               <TabsTrigger value="gradient">Gradient</TabsTrigger>
+              <TabsTrigger value="curves">Curves</TabsTrigger>
               <TabsTrigger value="quality">Quality</TabsTrigger>
             </TabsList>
 
@@ -485,6 +487,22 @@ export default function App() {
                 rgb={flame.palette}
                 index={paletteIndex}
                 onPick={(i) => void pickPalette(i)}
+              />
+            </TabsContent>
+
+            <TabsContent value="curves">
+              <CurvesEditor
+                curves={flame.curves}
+                onPoint={(ch, i, x, y) => {
+                  flame.setCurvePoint(ch, i, x, y);
+                  render(interacting ? { ...params, quality: PREVIEW_QUALITY } : params);
+                }}
+                onReset={(ch) => {
+                  void pushUndo();
+                  flame.resetCurve(ch);
+                  render(params);
+                }}
+                onInteract={setInteracting}
               />
             </TabsContent>
 

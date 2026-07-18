@@ -316,6 +316,33 @@ impl FlameHandle {
         }
     }
 
+    /// Tone curves as the flat 48-value layout used by the `curves` attribute:
+    /// 4 channels x 4 points x (x, y, weight).
+    #[wasm_bindgen(js_name = curves, getter)]
+    pub fn curves(&self) -> Vec<f64> {
+        crate::curves::to_values(&self.flame.curves)
+    }
+
+    /// Replace one control point on one channel (0=overall, 1..3 = RGB).
+    #[wasm_bindgen(js_name = setCurvePoint)]
+    pub fn set_curve_point(&mut self, channel: usize, index: usize, x: f64, y: f64) -> bool {
+        if channel > 3 || index > 3 {
+            return false;
+        }
+        self.flame.curves.channels[channel].points[index] = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
+        true
+    }
+
+    /// Reset one channel to the default control points.
+    #[wasm_bindgen(js_name = resetCurve)]
+    pub fn reset_curve(&mut self, channel: usize) -> bool {
+        if channel > 3 {
+            return false;
+        }
+        self.flame.curves.channels[channel] = crate::curves::Curve::default();
+        true
+    }
+
     /// Render at the given size, returning RGBA8 bytes (length w*h*4).
     ///
     /// Width/height override the genome so the UI can render previews cheaply

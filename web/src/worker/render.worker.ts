@@ -150,6 +150,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         handle = new FlameHandle(msg.name);
         post({ type: "loaded", id: msg.id, info: readInfo(handle, 512, 512), warnings: [] });
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
         return;
       }
 
@@ -168,6 +169,7 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           warnings,
         });
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
         return;
       }
 
@@ -195,6 +197,26 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
         if (!handle) return;
         const c = msg.coefs;
         handle.setXformCoefs(msg.xform, c[0], c[1], c[2], c[3], c[4], c[5]);
+        return;
+      }
+
+      case "setCurvePoint": {
+        if (!handle) return;
+        handle.setCurvePoint(msg.channel, msg.index, msg.x, msg.y);
+        post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
+        return;
+      }
+
+      case "resetCurve": {
+        if (!handle) return;
+        handle.resetCurve(msg.channel);
+        post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
+        return;
+      }
+
+      case "getCurves": {
+        if (!handle) return;
+        post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
         return;
       }
 

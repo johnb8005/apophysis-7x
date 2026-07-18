@@ -10,6 +10,7 @@ export interface FlameState {
   info: FlameInfo | null;
   palette: number[] | null;
   mutants: { size: number; thumbs: ArrayBuffer[] } | null;
+  curves: number[] | null;
   xforms: XformInfo[];
   variationNames: string[];
 }
@@ -38,6 +39,7 @@ export function useFlame() {
     info: null,
     palette: null,
     mutants: null,
+    curves: null,
     xforms: [],
     variationNames: [],
   });
@@ -107,6 +109,10 @@ export function useFlame() {
 
         case "xforms":
           setState((s) => ({ ...s, xforms: msg.xforms }));
+          return;
+
+        case "curves":
+          setState((s) => ({ ...s, curves: msg.values }));
           return;
 
         case "mutants":
@@ -207,6 +213,15 @@ export function useFlame() {
     [send],
   );
   const adoptMutant = useCallback((index: number) => send({ type: "adoptMutant", index }), [send]);
+  const setCurvePoint = useCallback(
+    (channel: number, index: number, x: number, y: number) =>
+      send({ type: "setCurvePoint", channel, index, x, y }),
+    [send],
+  );
+  const resetCurve = useCallback(
+    (channel: number) => send({ type: "resetCurve", channel }),
+    [send],
+  );
   const setXformParam = useCallback(
     (xform: number, variation: string, param: string, value: number) =>
       send({ type: "setXformParam", xform, variation, param, value }),
@@ -241,6 +256,8 @@ export function useFlame() {
     setChaos,
     mutationGrid,
     adoptMutant,
+    setCurvePoint,
+    resetCurve,
     dismissWarnings,
   };
 }

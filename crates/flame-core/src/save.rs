@@ -139,6 +139,12 @@ pub fn write_flame(f: &Flame) -> String {
     let plugins = used_plugins(f);
     out.push_str(&format!("plugins=\"{}\" ", plugins.join(" ")));
 
+    if f.curves.is_active() {
+        let vals = crate::curves::to_values(&f.curves);
+        let joined: Vec<String> = vals.iter().map(|v| g(*v)).collect();
+        out.push_str(&format!("curves=\"{}\" ", joined.join(" ")));
+    }
+
     // ESSENTIAL: without this, a reader reconstructs the linear/flatten slots
     // and the flame renders differently. See load.rs.
     out.push_str("new_linear=\"1\"");

@@ -86,6 +86,8 @@ pub struct Flame {
     pub spatial_filter_radius: f64,
 
     pub palette: Palette,
+    /// Bezier tone curves: overall, red, green, blue.
+    pub curves: crate::curves::Curves,
     pub name: String,
 
     /// -1 = none. When set, every other xform's opacity is forced to 0.
@@ -127,6 +129,7 @@ impl Default for Flame {
             spatial_oversample: 1,
             spatial_filter_radius: 0.5,
             palette: Palette::default(),
+            curves: crate::curves::Curves::default(),
             name: String::new(),
             solo_xform: -1,
             projection: Projection::None,

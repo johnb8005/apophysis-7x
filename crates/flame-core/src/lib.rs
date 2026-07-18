@@ -21,6 +21,7 @@ pub mod save;
 pub mod render;
 pub mod wasm;
 pub mod xml;
+pub mod curves;
 pub mod flame;
 pub mod rng;
 pub mod variation;
