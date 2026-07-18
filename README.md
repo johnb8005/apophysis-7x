@@ -7,6 +7,17 @@ the fractal flame editor, from Delphi to Rust/WebAssembly + React.
 
 No backend, no install — the renderer runs entirely in your browser as WebAssembly.
 
+| | |
+|---|---|
+| ![Sierpinski](docs/images/sierpinski.png) | ![Spiral](docs/images/spiral.png) |
+| Three half-scale linear transforms — the correctness check: this shape is unmistakable, so a fault anywhere in the chaos game, the xaos tables, the camera or the tone curve shows up immediately. | `spherical` + `swirl`, the classic flame look. |
+| ![Julian](docs/images/julian.png) | ![Bwraps](docs/images/bwraps.png) |
+| `julian` at power 5 with `pre_spherical` and `curl`. The five-fold symmetry is what makes a wrong dispatch kernel obvious at a glance. | `bwraps` cell-warp with `spherical`. |
+
+All four are rendered by the ported engine and regenerated with
+`cargo run --example gallery --release -- docs/images`, so they double as a
+visual regression check.
+
 ---
 
 ## Credits
@@ -57,10 +68,17 @@ a Web Worker so the interface stays responsive during a render.
 - Camera projection: 2D, pitch, pitch+yaw, and depth of field
 - Gaussian reconstruction filter and log-density tone mapping
 
+- All 29 built-in and all 47 plugin variations — 76 in total
+- `.flame` load and save, including the `new_linear` compatibility path
+- All 701 built-in gradients
+- The transform editor: triangle canvas, variations, variables, xaos, colors
+- Mouse navigation, undo/redo, PNG export
+
 ### Not yet ported
 
-The 47 plugin variations, `.flame` file loading, the 701 built-in palettes, the
-triangle editor, mutation grid, and the Pascal scripting engine.
+The mutation grid, the curves editor, and the Pascal scripting engine. The
+Chaotica and UPR exporters are deliberately dropped — they target external
+native renderers that cannot exist in a browser.
 
 ---
 
@@ -76,13 +94,17 @@ bun run wasm     # build the Rust renderer to WebAssembly
 bun run dev      # http://localhost:5173
 ```
 
-Render two reference flames natively, without the browser:
+Render natively, without the browser:
 
 ```bash
 cd crates/flame-core
 cargo test
-cargo run --example render_demo --release -- /tmp
+cargo run --example gallery --release -- ../../docs/images   # the images above
+cargo run --example loadtest --release -- input.flame out.png
 ```
+
+`loadtest` prints how each transform parsed, which is the quickest way to check
+whether a real-world file triggered the `new_linear` synthesis path.
 
 Deployment is automatic: pushing to `master` triggers
 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).

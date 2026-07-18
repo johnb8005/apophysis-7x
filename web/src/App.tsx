@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Download, Flame, FolderOpen, PanelRight, RefreshCw, Save, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Download,
+  Flame,
+  FolderOpen,
+  PanelRight,
+  RefreshCw,
+  Redo2,
+  Save,
+  Undo2,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,7 +18,7 @@ import { ParamSlider } from "@/components/ParamSlider";
 import { PaletteStrip } from "@/components/PaletteStrip";
 import { EditorPanel } from "@/components/EditorPanel";
 import { TriangleCanvas, type Coefs } from "@/components/TriangleCanvas";
-import { Viewport } from "@/components/Viewport";
+import { Viewport, type MouseMode } from "@/components/Viewport";
 import { useFlame } from "@/hooks/useFlame";
 import { DEFAULT_PARAMS, DEMOS, PREVIEW_QUALITY, type FlameParams } from "@/lib/types";
 
@@ -23,6 +34,18 @@ export default function App() {
   const [showEditor, setShowEditor] = useState(true);
   /** Coefs mid-drag, before the worker echoes them back. */
   const [draftCoefs, setDraftCoefs] = useState<Record<number, Coefs>>({});
+  const [mouseMode, setMouseMode] = useState<MouseMode>("pan");
+
+  /**
+   * Undo history as .flame snapshots.
+   *
+   * The XML round-trips exactly (see save.rs), so a snapshot captures the whole
+   * document — transforms, variations, parameters, xaos and palette — without
+   * a parallel undo model that could drift from the real state.
+   */
+  const undoStack = useRef<string[]>([]);
+  const redoStack = useRef<string[]>([]);
+  const [historyDepth, setHistoryDepth] = useState({ undo: 0, redo: 0 });
 
   /** True while a slider is being dragged — drops quality so it stays live. */
   const [interacting, setInteracting] = useState(false);
@@ -61,6 +84,35 @@ export default function App() {
   const set = useCallback(<K extends keyof FlameParams>(key: K, value: FlameParams[K]) => {
     setParams((p) => ({ ...p, [key]: value }));
   }, []);
+
+  /** Snapshot before a structural edit, so it can be undone. */
+  const pushUndo = useCallback(async () => {
+    const xml = await save();
+    if (!xml) return;
+    undoStack.current.push(xml);
+    // Bound the history so a long session cannot grow without limit.
+    if (undoStack.current.length > 50) undoStack.current.shift();
+    redoStack.current = [];
+    setHistoryDepth({ undo: undoStack.current.length, redo: 0 });
+  }, [save]);
+
+  const undo = useCallback(async () => {
+    const prev = undoStack.current.pop();
+    if (!prev) return;
+    const current = await save();
+    if (current) redoStack.current.push(current);
+    await loadFile(prev, 0);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
+  }, [save, loadFile]);
+
+  const redo = useCallback(async () => {
+    const next = redoStack.current.pop();
+    if (!next) return;
+    const current = await save();
+    if (current) undoStack.current.push(current);
+    await loadFile(next, 0);
+    setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
+  }, [save, loadFile]);
 
   const selectDemo = useCallback(
     async (name: string) => {
@@ -152,11 +204,12 @@ export default function App() {
 
   const onVariationChange = useCallback(
     (i: number, name: string, weight: number) => {
+      void pushUndo();
       flame.setVariation(i, name, weight);
       flame.refreshXforms();
       render(params);
     },
-    [flame, params, render],
+    [flame, params, render, pushUndo],
   );
 
   const onFieldChange = useCallback(
@@ -199,6 +252,27 @@ export default function App() {
 
         <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
 
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={() => void undo()}
+          disabled={historyDepth.undo === 0}
+          title="Undo"
+        >
+          <Undo2 className="h-3.5 w-3.5" />
+        </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          onClick={() => void redo()}
+          disabled={historyDepth.redo === 0}
+          title="Redo"
+        >
+          <Redo2 className="h-3.5 w-3.5" />
+        </Button>
+
+        <div className="mx-1 h-5 w-px bg-[var(--color-border)]" />
+
         <div className="flex items-center gap-1">
           {Object.entries(DEMOS).map(([key, d]) => (
             <Button
@@ -215,7 +289,7 @@ export default function App() {
         <div className="ml-auto flex items-center gap-2">
           <span className="tabular max-w-[22rem] truncate text-xs text-[var(--color-muted-foreground)]">
             {fileName ? `${fileName} — ` : ""}
-            {info ? `${info.xformCount} transforms · ` : ""}
+            {flame.xforms.length > 0 ? `${flame.xforms.length} transforms · ` : ""}
             {flame.bitmap ? `${flame.bitmap.width}×${flame.bitmap.height} · ${flame.ms.toFixed(0)} ms` : "—"}
           </span>
           <Button size="sm" variant="outline" onClick={() => render(params)} disabled={flame.rendering}>
@@ -259,7 +333,20 @@ export default function App() {
       <div className="flex min-h-0 flex-1">
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
-            <Viewport bitmap={flame.bitmap} rendering={flame.rendering} error={flame.error} />
+            <Viewport
+              bitmap={flame.bitmap}
+              rendering={flame.rendering}
+              error={flame.error}
+              mode={mouseMode}
+              onModeChange={setMouseMode}
+              ppu={params.scale * Math.pow(2, params.zoom)}
+              centerX={params.centerX}
+              centerY={params.centerY}
+              angle={params.angle}
+              zoom={params.zoom}
+              onNavigate={(next) => setParams((p) => ({ ...p, ...next }))}
+              onInteract={setInteracting}
+            />
           </div>
           {showEditor && (
             <div className="h-64 shrink-0 border-t border-[var(--color-border)] p-2">
@@ -290,14 +377,17 @@ export default function App() {
                 variationNames={flame.variationNames}
                 onSelect={setSelectedXform}
                 onAdd={() => {
+                  void pushUndo();
                   flame.addXform();
                   render(params);
                 }}
                 onDuplicate={(i) => {
+                  void pushUndo();
                   flame.duplicateXform(i);
                   render(params);
                 }}
                 onDelete={(i) => {
+                  void pushUndo();
                   flame.deleteXform(i);
                   render(params);
                 }}

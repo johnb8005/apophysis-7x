@@ -1,18 +1,56 @@
-import { useEffect, useRef } from "react";
-import { Loader2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, Move, RotateCw, ZoomIn } from "lucide-react";
+
+export type MouseMode = "pan" | "rotate" | "zoom";
 
 interface ViewportProps {
   bitmap: ImageData | null;
   rendering: boolean;
   error: string | null;
+  mode: MouseMode;
+  onModeChange: (m: MouseMode) => void;
+  /** Effective pixels-per-unit, needed to convert drags into world units. */
+  ppu: number;
+  centerX: number;
+  centerY: number;
+  angle: number;
+  zoom: number;
+  onNavigate: (next: Partial<{ centerX: number; centerY: number; angle: number; zoom: number }>) => void;
+  onInteract: (active: boolean) => void;
 }
 
 /**
- * Draws the rendered frame. The canvas is sized to the bitmap and scaled down
- * by CSS so a large render still fits the pane without resampling in JS.
+ * The main preview, with direct manipulation as in the Delphi original: drag
+ * to pan, drag to rotate, scroll or drag to zoom.
+ *
+ * The canvas is CSS-scaled to fit its pane, so screen pixels are not image
+ * pixels — every drag is converted through the displayed/bitmap ratio before
+ * being applied in world units.
  */
-export function Viewport({ bitmap, rendering, error }: ViewportProps) {
+export function Viewport({
+  bitmap,
+  rendering,
+  error,
+  mode,
+  onModeChange,
+  ppu,
+  centerX,
+  centerY,
+  angle,
+  zoom,
+  onNavigate,
+  onInteract,
+}: ViewportProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drag = useRef<{
+    x: number;
+    y: number;
+    centerX: number;
+    centerY: number;
+    angle: number;
+    zoom: number;
+  } | null>(null);
+  const [cursor, setCursor] = useState("grab");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -22,9 +60,85 @@ export function Viewport({ bitmap, rendering, error }: ViewportProps) {
     canvas.getContext("2d")?.putImageData(bitmap, 0, 0);
   }, [bitmap]);
 
+  useEffect(() => {
+    setCursor(mode === "pan" ? "grab" : mode === "rotate" ? "crosshair" : "zoom-in");
+  }, [mode]);
+
+  /** Screen pixels per image pixel, since the canvas is scaled to fit. */
+  const displayRatio = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !bitmap) return 1;
+    const rect = canvas.getBoundingClientRect();
+    return rect.width / bitmap.width || 1;
+  }, [bitmap]);
+
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    drag.current = { x: e.clientX, y: e.clientY, centerX, centerY, angle, zoom };
+    onInteract(true);
+    if (mode === "pan") setCursor("grabbing");
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const d = drag.current;
+    if (!d) return;
+
+    const ratio = displayRatio();
+    const dx = (e.clientX - d.x) / ratio;
+    const dy = (e.clientY - d.y) / ratio;
+
+    // Right-drag always orbits, matching the original's 3D camera gesture.
+    const effective: MouseMode = e.buttons === 2 ? "rotate" : mode;
+
+    switch (effective) {
+      case "pan": {
+        // The renderer maps world +y to increasing rows, so both axes move the
+        // same way: dragging the image right decreases the camera centre.
+        onNavigate({
+          centerX: d.centerX - dx / ppu,
+          centerY: d.centerY - dy / ppu,
+        });
+        return;
+      }
+      case "rotate": {
+        // Horizontal travel across the canvas is one full turn.
+        const canvas = canvasRef.current;
+        const width = canvas ? canvas.width : 512;
+        onNavigate({ angle: d.angle + (dx / width) * Math.PI * 2 });
+        return;
+      }
+      case "zoom": {
+        // Dragging up zooms in; one canvas height is four powers of two.
+        const canvas = canvasRef.current;
+        const height = canvas ? canvas.height : 512;
+        onNavigate({ zoom: d.zoom - (dy / height) * 4 });
+        return;
+      }
+    }
+  };
+
+  const endDrag = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!drag.current) return;
+    drag.current = null;
+    onInteract(false);
+    if (mode === "pan") setCursor("grab");
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
+
+  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    onNavigate({ zoom: zoom + (e.deltaY < 0 ? 0.15 : -0.15) });
+  };
+
+  const modes: [MouseMode, typeof Move, string][] = [
+    ["pan", Move, "Pan"],
+    ["rotate", RotateCw, "Rotate"],
+    ["zoom", ZoomIn, "Zoom"],
+  ];
+
   return (
     <div className="relative flex h-full min-h-0 items-center justify-center bg-black p-4">
-      {/* A checker backdrop makes transparent renders legible. */}
       <div
         className="absolute inset-4 rounded opacity-[0.03]"
         style={{
@@ -34,17 +148,42 @@ export function Viewport({ bitmap, rendering, error }: ViewportProps) {
           backgroundPosition: "0 0, 8px 8px",
         }}
       />
+
       {bitmap ? (
         <canvas
           ref={canvasRef}
           className="relative max-h-full max-w-full rounded shadow-2xl ring-1 ring-white/10"
-          style={{ imageRendering: "auto" }}
+          style={{ cursor, touchAction: "none" }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onWheel={onWheel}
+          onContextMenu={(e) => e.preventDefault()}
         />
       ) : (
         <div className="relative text-sm text-[var(--color-muted-foreground)]">
           {error ? null : "Initialising renderer…"}
         </div>
       )}
+
+      {/* Mouse-mode toolbar, as in the original's main toolbar. */}
+      <div className="absolute left-6 top-6 flex gap-1 rounded-md bg-black/70 p-1 backdrop-blur">
+        {modes.map(([m, Icon, label]) => (
+          <button
+            key={m}
+            onClick={() => onModeChange(m)}
+            title={`${label} (right-drag always rotates)`}
+            className={`rounded p-1.5 transition-colors ${
+              mode === m
+                ? "bg-[var(--color-primary)] text-[var(--color-primary-foreground)]"
+                : "text-[var(--color-muted-foreground)] hover:bg-white/10"
+            }`}
+          >
+            <Icon className="h-3.5 w-3.5" />
+          </button>
+        ))}
+      </div>
 
       {rendering && (
         <div className="absolute right-6 top-6 flex items-center gap-2 rounded-md bg-black/70 px-2.5 py-1.5 text-xs backdrop-blur">
