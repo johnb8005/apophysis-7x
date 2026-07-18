@@ -304,6 +304,14 @@ export default function App() {
                 onField={onFieldChange}
                 onCoefs={(i, c, committing) => onCoefsChange(i, c as Coefs, committing)}
                 onVariation={onVariationChange}
+                onParam={(i, variation, param, value) => {
+                  flame.setXformParam(i, variation, param, value);
+                  render(params);
+                }}
+                onChaos={(i, to, value) => {
+                  flame.setChaos(i, to, value);
+                  render(params);
+                }}
                 onInteract={setInteracting}
               />
             </TabsContent>

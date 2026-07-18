@@ -3,7 +3,12 @@
 // Rendering runs here rather than on the main thread: a full-quality frame
 // takes ~1s, which would freeze every slider drag.
 
-import init, { FlameHandle, flameWarnings, variationNames } from "@/wasm/flame_core";
+import init, {
+  FlameHandle,
+  flameWarnings,
+  variationNames,
+  variationParams,
+} from "@/wasm/flame_core";
 import wasmUrl from "@/wasm/flame_core_bg.wasm?url";
 import type { FlameInfo, FlameParams, WorkerRequest, WorkerResponse } from "@/lib/types";
 
@@ -79,6 +84,19 @@ function readXforms(h: FlameHandle) {
     for (let k = 0; k < flat.length; k += 2) {
       vars.push({ name: flat[k], weight: Number(flat[k + 1]) });
     }
+    // Per-variation parameters, e.g. julian_power. Only attached variations
+    // contribute, so the Variables tab shows exactly what is in play.
+    const params: { name: string; value: number; variation: string }[] = [];
+    for (const v of vars) {
+      if (v.weight === 0) continue;
+      for (const pname of Array.from(variationParams(v.name))) {
+        const value = h.xformParam(i, v.name, pname);
+        if (value !== undefined) {
+          params.push({ name: pname, value, variation: v.name });
+        }
+      }
+    }
+
     out.push({
       coefs: Array.from(h.xformCoefs(i)) as [number, number, number, number, number, number],
       weight: h.xformWeight(i),
@@ -86,6 +104,8 @@ function readXforms(h: FlameHandle) {
       opacity: h.xformOpacity(i),
       symmetry: h.xformSymmetry(i),
       vars,
+      params,
+      chaos: Array.from(h.xformChaos(i)),
     });
   }
   return out;
@@ -198,6 +218,20 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
 
       case "getXforms": {
         if (!handle) return;
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "setXformParam": {
+        if (!handle) return;
+        handle.setXformParam(msg.xform, msg.variation, msg.param, msg.value);
+        post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
+        return;
+      }
+
+      case "setChaos": {
+        if (!handle) return;
+        handle.setXformChaos(msg.xform, msg.to, msg.value);
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         return;
       }

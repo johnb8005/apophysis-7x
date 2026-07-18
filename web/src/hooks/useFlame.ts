@@ -191,6 +191,15 @@ export function useFlame() {
     [send],
   );
   const loadVariationNames = useCallback(() => send({ type: "variationNames" }), [send]);
+  const setXformParam = useCallback(
+    (xform: number, variation: string, param: string, value: number) =>
+      send({ type: "setXformParam", xform, variation, param, value }),
+    [send],
+  );
+  const setChaos = useCallback(
+    (xform: number, to: number, value: number) => send({ type: "setChaos", xform, to, value }),
+    [send],
+  );
 
   const dismissWarnings = useCallback(() => {
     setState((s) => ({ ...s, warnings: [] }));
@@ -211,6 +220,8 @@ export function useFlame() {
     refreshXforms,
     setXformField,
     loadVariationNames,
+    setXformParam,
+    setChaos,
     dismissWarnings,
   };
 }

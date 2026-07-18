@@ -63,6 +63,10 @@ export interface XformInfo {
   opacity: number;
   symmetry: number;
   vars: { name: string; weight: number }[];
+  /** Parameters of the attached variations, e.g. julian_power. */
+  params: { name: string; value: number; variation: string }[];
+  /** Xaos row: transition weight to each transform. */
+  chaos: number[];
 }
 
 export type XformField = "weight" | "color" | "opacity" | "symmetry";
@@ -80,7 +84,9 @@ export type WorkerRequest =
   | { type: "duplicateXform"; id: number; xform: number }
   | { type: "getXforms"; id: number }
   | { type: "setXformField"; id: number; xform: number; field: XformField; value: number }
-  | { type: "variationNames"; id: number };
+  | { type: "variationNames"; id: number }
+  | { type: "setXformParam"; id: number; xform: number; variation: string; param: string; value: number }
+  | { type: "setChaos"; id: number; xform: number; to: number; value: number };
 
 export type WorkerResponse =
   | { type: "ready" }

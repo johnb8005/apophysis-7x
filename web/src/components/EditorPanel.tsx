@@ -17,6 +17,8 @@ interface EditorPanelProps {
   onField: (i: number, field: XformField, value: number) => void;
   onCoefs: (i: number, coefs: number[], committing: boolean) => void;
   onVariation: (i: number, name: string, weight: number) => void;
+  onParam: (i: number, variation: string, param: string, value: number) => void;
+  onChaos: (i: number, to: number, value: number) => void;
   onInteract: (active: boolean) => void;
 }
 
@@ -35,6 +37,8 @@ export function EditorPanel({
   onField,
   onCoefs,
   onVariation,
+  onParam,
+  onChaos,
   onInteract,
 }: EditorPanelProps) {
   const [search, setSearch] = useState("");
@@ -119,10 +123,12 @@ export function EditorPanel({
       </div>
 
       <Tabs defaultValue="vars">
-        <TabsList>
+        <TabsList className="flex-wrap">
           <TabsTrigger value="vars">Variations</TabsTrigger>
+          <TabsTrigger value="params">Variables</TabsTrigger>
           <TabsTrigger value="transform">Transform</TabsTrigger>
           <TabsTrigger value="colors">Colors</TabsTrigger>
+          <TabsTrigger value="xaos">Xaos</TabsTrigger>
         </TabsList>
 
         <TabsContent value="vars" className="space-y-2">
@@ -177,6 +183,72 @@ export function EditorPanel({
                 </div>
               );
             })}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="params" className="space-y-2">
+          {xf.params.length === 0 ? (
+            <p className="py-2 text-[10px] leading-relaxed text-[var(--color-muted-foreground)]">
+              No parameters. Attach a variation that has them — for example
+              <code className="mx-1 rounded bg-[var(--color-secondary)] px-1">julian</code>
+              or
+              <code className="mx-1 rounded bg-[var(--color-secondary)] px-1">bwraps</code>.
+            </p>
+          ) : (
+            <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+              {xf.params.map((p) => (
+                <div key={p.name} className="flex items-center gap-2">
+                  <span className="flex-1 truncate text-[11px]" title={`${p.variation} · ${p.name}`}>
+                    {p.name}
+                  </span>
+                  <input
+                    type="number"
+                    step={0.05}
+                    value={Number(p.value.toFixed(6))}
+                    onChange={(e) => {
+                      const v = Number.parseFloat(e.target.value);
+                      if (Number.isFinite(v)) onParam(selected, p.variation, p.name, v);
+                    }}
+                    className="tabular h-6 w-20 rounded border border-[var(--color-input)] bg-transparent px-1 text-right text-[11px] focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="pt-1 text-[10px] leading-relaxed text-[var(--color-muted-foreground)]">
+            Some values are coerced on entry — several variations round to an integer or forbid
+            zero, exactly as the original does.
+          </p>
+        </TabsContent>
+
+        <TabsContent value="xaos" className="space-y-2">
+          <p className="text-[10px] leading-relaxed text-[var(--color-muted-foreground)]">
+            Transition weight from transform {selected + 1} to each other transform. 1 is
+            neutral; 0 forbids the transition entirely.
+          </p>
+          <div className="space-y-1">
+            {xf.chaos.map((w, j) => (
+              <div key={j} className="flex items-center gap-2">
+                <span
+                  className="h-3 w-3 shrink-0 rounded-sm"
+                  style={{ background: `hsl(${(j * 47) % 360} 85% 55%)` }}
+                />
+                <span className="flex-1 text-[11px]">
+                  {selected + 1} &rarr; {j + 1}
+                </span>
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0}
+                  value={Number(w.toFixed(4))}
+                  onChange={(e) => {
+                    const v = Number.parseFloat(e.target.value);
+                    if (Number.isFinite(v)) onChaos(selected, j, v);
+                  }}
+                  className="tabular h-6 w-20 rounded border border-[var(--color-input)] bg-transparent px-1 text-right text-[11px] focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                />
+              </div>
+            ))}
           </div>
         </TabsContent>
 
