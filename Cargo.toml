@@ -1,0 +1,11 @@
+# Workspace root, so cargo commands work from the repository root
+# (`cargo test`, `cargo clippy`, `cargo run --example gallery`).
+[workspace]
+members = ["crates/flame-core"]
+resolver = "2"
+
+# Profiles are ignored in non-root manifests, so they live here.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

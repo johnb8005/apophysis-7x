@@ -3,6 +3,10 @@
 // See LICENSE (GPL-2.0-or-later) at the repo root.
 //
 // All eight accumulate into FP and none touches the colour coordinate.
+//
+// Constants are copied digit-for-digit from the Pascal source rather than
+// spelled as std::f64::consts — matching the original is the point.
+#![allow(clippy::approx_constant, clippy::excessive_precision)]
 
 use crate::plugins::is_zero;
 use crate::variation::Pass;

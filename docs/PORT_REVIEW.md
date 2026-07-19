@@ -8,6 +8,21 @@ Line references are as of the reviewed revision (`df9da21`).
 `wasm-pack build` + `tsc -b` + `vite build` all succeed end-to-end.
 `cargo clippy` fails out of the box (see Tooling, below).
 
+> **Status update (post-review fixes).** The findings below were addressed on
+> this branch after the review: **fixed** — C1, C2, M1–M11, the cam_dof /
+> cam-precedence / curves-weights / legacy `var=` / numeric-entity minors, the
+> triangle hit-test, release-commit staleness, gradient-strip palette, wheel
+> zoom, rotated pan, failed-open filename, keyboard shortcuts, ParamSlider
+> text entry, plus all Tooling items (CI tests, clippy, workspace, README).
+> The regenerated gallery images are byte-identical, confirming the baseline
+> renders are unaffected. **Still open:** M12 (render cancellation /
+> worker-panic recovery — an architecture change), the mutate.rs rewrite
+> (deliberate), Delphi-only attributes (`time`/`nick`/`url`/`estimator_*`/
+> `<xdata>`), `<symmetry kind>` and palette-by-index reconstruction, xml.rs
+> CDATA/DOCTYPE/UTF-8-text exotics, the final xform's absent UI surface, the
+> CurvesEditor smoothstep display and weight editing, viewport DPR, and the
+> degenerate-camera / negative-gutter / filter-edge-clamp edge cases.
+
 Severity legend: **Critical** = user-visible wrong behavior in a core flow;
 **Major** = wrong output or data loss in realistic scenarios; **Minor** =
 edge-case divergence or paper cut; *Note* = documented/acceptable deviation
