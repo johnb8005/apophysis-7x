@@ -96,13 +96,16 @@ export default function App() {
     setParams((p) => ({ ...info.params, width: p.width, height: p.height }));
   }, [info]);
 
-  const set = useCallback(<K extends keyof FlameParams>(key: K, value: FlameParams[K]) => {
-    setParams((p) => ({ ...p, [key]: value }));
-  }, []);
+  // Always-current params for async callbacks (save/undo snapshot at the
+  // moment of the call, not at the closure's creation).
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
 
-  /** Snapshot before a structural edit, so it can be undone. */
+  /** Snapshot before an edit, so it can be undone. */
   const pushUndo = useCallback(async () => {
-    const xml = await save();
+    // Snapshot with the CURRENT UI params — the worker document may lag them
+    // while a render is in flight.
+    const xml = await save(paramsRef.current);
     if (!xml) return;
     undoStack.current.push(xml);
     // Bound the history so a long session cannot grow without limit.
@@ -111,10 +114,40 @@ export default function App() {
     setHistoryDepth({ undo: undoStack.current.length, redo: 0 });
   }, [save]);
 
+  /**
+   * One undo entry per GESTURE, not per event. Continuous edits (slider drags,
+   * triangle drags, typed digits) fire dozens of times; pushing each would
+   * flood the 50-entry history and make Undo step through half-states. Same
+   * key within the window = same gesture, and the window extends while the
+   * gesture continues.
+   */
+  const lastPush = useRef({ key: "", t: 0 });
+  const pushUndoCoalesced = useCallback(
+    (key: string) => {
+      const now = performance.now();
+      if (lastPush.current.key === key && now - lastPush.current.t < 1000) {
+        lastPush.current.t = now;
+        return;
+      }
+      lastPush.current = { key, t: now };
+      void pushUndo();
+    },
+    [pushUndo],
+  );
+
+  const set = useCallback(
+    <K extends keyof FlameParams>(key: K, value: FlameParams[K]) => {
+      pushUndoCoalesced(`param:${key}`);
+      setParams((p) => ({ ...p, [key]: value }));
+    },
+    [pushUndoCoalesced],
+  );
+
   const undo = useCallback(async () => {
     const prev = undoStack.current.pop();
     if (!prev) return;
-    const current = await save();
+    lastPush.current = { key: "", t: 0 };
+    const current = await save(paramsRef.current);
     if (current) redoStack.current.push(current);
     await loadFile(prev, 0);
     setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
@@ -123,27 +156,50 @@ export default function App() {
   const redo = useCallback(async () => {
     const next = redoStack.current.pop();
     if (!next) return;
-    const current = await save();
+    lastPush.current = { key: "", t: 0 };
+    const current = await save(paramsRef.current);
     if (current) undoStack.current.push(current);
     await loadFile(next, 0);
     setHistoryDepth({ undo: undoStack.current.length, redo: redoStack.current.length });
   }, [save, loadFile]);
 
+  // Ctrl/Cmd+Z undoes, Ctrl+Y or Ctrl/Cmd+Shift+Z redoes — unless the
+  // keystroke belongs to a text field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) {
+        return;
+      }
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        void undo();
+      } else if (k === "y" || (k === "z" && e.shiftKey)) {
+        e.preventDefault();
+        void redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
+  /** Immediate snapshot for discrete actions; also ends any open gesture. */
+  const pushUndoNow = useCallback(() => {
+    lastPush.current = { key: "", t: 0 };
+    void pushUndo();
+  }, [pushUndo]);
+
   const selectDemo = useCallback(
     async (name: string) => {
       setDemo(name);
       setFileName(null);
-      const d = DEMOS[name];
+      // The demo's camera/tone are baked into the wasm-side flame; the
+      // `loaded` info adopts them into params. Setting them here as well
+      // raced that adoption (last write won).
       await loadDemo(name);
-      setParams((p) => ({
-        ...p,
-        scale: d.scale,
-        centerX: d.centerX,
-        centerY: d.centerY,
-        quality: d.quality,
-        zoom: 0,
-        angle: 0,
-      }));
     },
     [loadDemo],
   );
@@ -151,14 +207,16 @@ export default function App() {
   const openFile = useCallback(
     async (file: File) => {
       const text = await file.text();
-      setFileName(file.name);
-      await loadFile(text, 0);
+      const res = await loadFile(text, 0);
+      // Only claim the name once the file actually loaded — keeping a failed
+      // file's name next to the old flame mislabels what's on screen.
+      if (res.type !== "error") setFileName(file.name);
     },
     [loadFile],
   );
 
   const saveFlame = useCallback(async () => {
-    const xml = await save();
+    const xml = await save(paramsRef.current);
     if (!xml) return;
     const blob = new Blob([xml], { type: "application/xml" });
     const url = URL.createObjectURL(blob);
@@ -188,12 +246,13 @@ export default function App() {
 
   const pickPalette = useCallback(
     async (index: number) => {
+      pushUndoCoalesced("palette");
       setPaletteIndex(index);
       await setPalette(index);
       // Force a re-render with the new palette.
       render(params);
     },
-    [setPalette, render, params],
+    [setPalette, render, params, pushUndoCoalesced],
   );
 
   // Triangle coefs: the in-flight draft wins so dragging stays smooth.
@@ -203,6 +262,9 @@ export default function App() {
 
   const onCoefsChange = useCallback(
     (i: number, next: Coefs, committing: boolean) => {
+      // The triangle drag is the app's primary edit gesture — it must be
+      // undoable. One entry per drag, snapshotted before the first move.
+      pushUndoCoalesced(`coefs:${i}`);
       setDraftCoefs((d) => ({ ...d, [i]: next }));
       flame.setCoefs(i, next);
       if (committing) {
@@ -214,25 +276,26 @@ export default function App() {
         render({ ...params, quality: PREVIEW_QUALITY });
       }
     },
-    [flame, params, render],
+    [flame, params, render, pushUndoCoalesced],
   );
 
   const onVariationChange = useCallback(
     (i: number, name: string, weight: number) => {
-      void pushUndo();
+      pushUndoCoalesced(`var:${i}:${name}`);
       flame.setVariation(i, name, weight);
       flame.refreshXforms();
       render(params);
     },
-    [flame, params, render, pushUndo],
+    [flame, params, render, pushUndoCoalesced],
   );
 
   const onFieldChange = useCallback(
     (i: number, field: Parameters<typeof flame.setXformField>[1], value: number) => {
+      pushUndoCoalesced(`field:${i}:${field}`);
       flame.setXformField(i, field, value);
       render(interacting ? { ...params, quality: PREVIEW_QUALITY } : params);
     },
-    [flame, params, render, interacting],
+    [flame, params, render, interacting, pushUndoCoalesced],
   );
 
   return (
@@ -394,33 +457,37 @@ export default function App() {
                 variationNames={flame.variationNames}
                 onSelect={setSelectedXform}
                 onAdd={() => {
-                  void pushUndo();
+                  pushUndoNow();
                   flame.addXform();
                   render(params);
                 }}
                 onDuplicate={(i) => {
-                  void pushUndo();
+                  pushUndoNow();
                   flame.duplicateXform(i);
                   render(params);
                 }}
                 onDelete={(i) => {
-                  void pushUndo();
+                  pushUndoNow();
                   flame.deleteXform(i);
                   render(params);
                 }}
                 onField={onFieldChange}
                 onCoefs={(i, c, committing) => onCoefsChange(i, c as Coefs, committing)}
                 onPost={(i, c) => {
-                  void pushUndo();
+                  // Coalesced: this fires per keystroke in the post-matrix
+                  // inputs, and one undo entry per edit burst is enough.
+                  pushUndoCoalesced(`post:${i}`);
                   flame.setPost(i, c);
                   render(params);
                 }}
                 onVariation={onVariationChange}
                 onParam={(i, variation, param, value) => {
+                  pushUndoCoalesced(`vparam:${i}:${param}`);
                   flame.setXformParam(i, variation, param, value);
                   render(params);
                 }}
                 onChaos={(i, to, value) => {
+                  pushUndoCoalesced(`chaos:${i}:${to}`);
                   flame.setChaos(i, to, value);
                   render(params);
                 }}
@@ -448,7 +515,7 @@ export default function App() {
                 }}
                 onAdopt={(i) => {
                   if (i === 4) return;
-                  void pushUndo();
+                  pushUndoNow();
                   flame.adoptMutant(i);
                   render(params);
                 }}
@@ -494,11 +561,12 @@ export default function App() {
               <CurvesEditor
                 curves={flame.curves}
                 onPoint={(ch, i, x, y) => {
+                  pushUndoCoalesced(`curve:${ch}:${i}`);
                   flame.setCurvePoint(ch, i, x, y);
                   render(interacting ? { ...params, quality: PREVIEW_QUALITY } : params);
                 }}
                 onReset={(ch) => {
-                  void pushUndo();
+                  pushUndoNow();
                   flame.resetCurve(ch);
                   render(params);
                 }}

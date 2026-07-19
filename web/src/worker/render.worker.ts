@@ -36,9 +36,17 @@ function post(msg: WorkerResponse, transfer?: Transferable[]) {
 
 function ensureReady(): Promise<void> {
   if (!initPromise) {
-    initPromise = init({ module_or_path: wasmUrl }).then(() => {
-      post({ type: "ready" });
-    });
+    initPromise = init({ module_or_path: wasmUrl })
+      .then(() => {
+        post({ type: "ready" });
+      })
+      .catch((err) => {
+        // A failed init (offline, bad cache) must not be memoised forever —
+        // clear it so the next message retries instead of erroring until a
+        // page reload.
+        initPromise = null;
+        throw err;
+      });
   }
   return initPromise;
 }
@@ -49,12 +57,24 @@ function ensurePalettes(): Promise<Uint8Array> {
   // Memoised for the same reason as ensureReady: concurrent callers must
   // share one fetch rather than each starting their own.
   if (!palettePromise) {
-    // Side-loaded rather than baked into the wasm — it is 538 KB.
-    palettePromise = fetch(new URL("palettes.bin", self.location.href).href)
-      .then((r) => r.arrayBuffer())
+    // Side-loaded rather than baked into the wasm — it is 538 KB. The URL
+    // must come from the Vite base, NOT from self.location: the worker script
+    // is emitted under assets/ (and served from src/worker/ in dev), so a
+    // script-relative fetch 404s in both environments and the HTML error page
+    // would be cached as the "palette blob".
+    palettePromise = fetch(`${import.meta.env.BASE_URL}palettes.bin`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`palettes.bin: HTTP ${r.status}`);
+        return r.arrayBuffer();
+      })
       .then((b) => {
         palettes = new Uint8Array(b);
         return palettes;
+      })
+      .catch((err) => {
+        // Don't cache the failure forever — allow a retry on the next call.
+        palettePromise = null;
+        throw err;
       });
   }
   return palettePromise;
@@ -65,6 +85,8 @@ function apply(h: FlameHandle, p: FlameParams) {
   h.scale = p.scale;
   h.angle = p.angle;
   h.setCenter(p.centerX, p.centerY);
+  // The UI's chosen output size is the document size a save writes out.
+  h.setSize(p.width, p.height);
 
   h.brightness = p.brightness;
   h.gamma = p.gamma;
@@ -115,14 +137,15 @@ function readXforms(h: FlameHandle) {
 }
 
 /** Read the flame's own settings back out, so loading a file updates the UI. */
-function readInfo(h: FlameHandle, width: number, height: number): FlameInfo {
+function readInfo(h: FlameHandle): FlameInfo {
+  const bg = Array.from(h.background());
   return {
     name: h.name,
     xformCount: h.xformCount,
     hasFinalXform: h.hasFinalXform,
     params: {
-      width,
-      height,
+      width: h.flameWidth,
+      height: h.flameHeight,
       zoom: h.zoom,
       scale: h.scale,
       angle: h.angle,
@@ -132,7 +155,9 @@ function readInfo(h: FlameHandle, width: number, height: number): FlameInfo {
       gamma: h.gamma,
       vibrancy: h.vibrancy,
       gammaThreshold: h.gammaThreshold,
-      background: [0, 0, 0],
+      // 0-255, straight from the flame — fabricating [0,0,0] here would wipe
+      // a loaded file's background on the next render.
+      background: [bg[0] ?? 0, bg[1] ?? 0, bg[2] ?? 0],
       quality: h.quality,
       oversample: h.oversample,
       filterRadius: h.filterRadius,
@@ -148,9 +173,13 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
     switch (msg.type) {
       case "loadDemo": {
         handle = new FlameHandle(msg.name);
-        post({ type: "loaded", id: msg.id, info: readInfo(handle, 512, 512), warnings: [] });
+        // Thumbnails from a previous flame must not survive a load — clicking
+        // one would replace the new flame with a mutant of the old one.
+        mutants = [];
+        post({ type: "loaded", id: msg.id, info: readInfo(handle), warnings: [] });
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
+        post({ type: "palette", id: msg.id, rgb: Array.from(handle.paletteBytes()) });
         return;
       }
 
@@ -162,25 +191,40 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           return;
         }
         handle = h;
+        mutants = [];
         post({
           type: "loaded",
           id: msg.id,
-          info: readInfo(handle, 512, 512),
+          info: readInfo(handle),
           warnings,
         });
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         post({ type: "curves", id: msg.id, values: Array.from(handle.curves) });
+        // The file's own gradient, so the strip shows what actually renders.
+        post({ type: "palette", id: msg.id, rgb: Array.from(handle.paletteBytes()) });
         return;
       }
 
       case "save": {
-        if (!handle) return;
+        if (!handle) {
+          // A silent return would leave the caller's `await save()` pending
+          // forever — always answer request-style messages.
+          post({ type: "error", id: msg.id, message: "save: no flame loaded" });
+          return;
+        }
+        // Sync the UI's params first: while a render is in flight the newest
+        // camera/tone values only exist on the main thread, and serialising
+        // without them writes a stale file.
+        if (msg.params) apply(handle, msg.params);
         post({ type: "saved", id: msg.id, xml: handle.toFlameFile() });
         return;
       }
 
       case "setPalette": {
-        if (!handle) return;
+        if (!handle) {
+          post({ type: "error", id: msg.id, message: "setPalette: no flame loaded" });
+          return;
+        }
         const blob = await ensurePalettes();
         handle.setPaletteFromBlob(blob, msg.index);
         post({ type: "palette", id: msg.id, rgb: Array.from(handle.paletteBytes()) });
@@ -289,13 +333,18 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
           const h =
             i === 4 ? handle : handle.mutated(msg.trend, msg.amount, msg.seed + i);
           mutants.push(h);
+          // Thumbnail rendering must not leak into document state — slot 4 IS
+          // the live flame, and the others may be adopted. Stash and restore
+          // the exact values rather than multiplying back (which drifts).
+          const q = h.quality;
+          const s = h.scale;
           h.quality = msg.quality;
           // Scale pixels-per-unit with the thumbnail size, or a 150px thumb
           // of a flame framed for 512px shows only a small crop of it.
-          h.scale = (h.scale * msg.size) / msg.baseSize;
+          h.scale = (s * msg.size) / msg.baseSize;
           const px = h.render(msg.size, msg.size);
-          // Restore, so adopting a mutant keeps the parent's framing.
-          h.scale = (h.scale * msg.baseSize) / msg.size;
+          h.quality = q;
+          h.scale = s;
           thumbs.push(px.buffer as ArrayBuffer);
         }
         post({ type: "mutants", id: msg.id, size: msg.size, thumbs }, thumbs);
@@ -304,10 +353,15 @@ self.onmessage = async (ev: MessageEvent<WorkerRequest>) => {
 
       case "adoptMutant": {
         const chosen = mutants[msg.index];
-        if (!chosen) return;
+        if (!chosen) {
+          // Stale click (grid already consumed or cleared by a load): say so
+          // instead of silently ignoring what looks like a dead button.
+          post({ type: "error", id: msg.id, message: "That mutation grid is no longer current — generate a new one." });
+          return;
+        }
         handle = chosen;
         mutants = [];
-        post({ type: "loaded", id: msg.id, info: readInfo(handle, 512, 512), warnings: [] });
+        post({ type: "loaded", id: msg.id, info: readInfo(handle), warnings: [] });
         post({ type: "xforms", id: msg.id, xforms: readXforms(handle) });
         return;
       }
