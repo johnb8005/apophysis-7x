@@ -28,16 +28,21 @@ const HANDLE_PX = 7;
  * Dragging a vertex therefore edits the matrix directly, which is what makes
  * this representation worth having.
  *
- * Screen y is flipped relative to world y, matching the original — the
- * negation lives in Apophysis's `GetTriangle` (Editor.pas:2805), not in its
- * renderer, which is why loaded flames look upright here but the renderer
- * itself does no flip.
+ * Stored world +y is drawn DOWNWARD, the same direction the renderer maps it
+ * (+y plots to increasing bucket rows, i.e. toward the bottom of the image).
+ * The original agrees, via a double negation that is easy to misread as a
+ * single flip: `GetTriangle` negates y (ControlPoint.pas:2799-2806, with the
+ * reference Y vertex at (0,-1)), and the editor's `ToScreen` flips again
+ * (Editor.pas `iy - fy*sc`) — net effect, stored +y is down on screen. With
+ * only one flip the editor shows a vertical mirror of the render and dragging
+ * a handle up moves the structure down.
  */
 export function TriangleCanvas({ coefs, selected, onSelect, onChange }: TriangleCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ scale: 90, ox: 0, oy: 0 });
   const grab = useRef<{ index: number; grab: Grab } | null>(null);
+  const lastDraft = useRef<Coefs | null>(null);
   const panning = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
   const [size, setSize] = useState({ w: 400, h: 400 });
 
@@ -56,7 +61,7 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
   const toScreen = useCallback(
     (wx: number, wy: number): [number, number] => [
       size.w / 2 + (wx + view.ox) * view.scale,
-      size.h / 2 - (wy + view.oy) * view.scale,
+      size.h / 2 + (wy + view.oy) * view.scale,
     ],
     [size, view],
   );
@@ -64,7 +69,7 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
   const toWorld = useCallback(
     (sx: number, sy: number): [number, number] => [
       (sx - size.w / 2) / view.scale - view.ox,
-      -((sy - size.h / 2) / view.scale) - view.oy,
+      (sy - size.h / 2) / view.scale - view.oy,
     ],
     [size, view],
   );
@@ -91,8 +96,8 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
     const step = view.scale >= 12 ? 1 : Math.pow(2, Math.ceil(Math.log2(12 / view.scale)));
     ctx.strokeStyle = "rgba(255,255,255,0.06)";
     ctx.lineWidth = 1;
-    const [wx0, wy1] = toWorld(0, 0);
-    const [wx1, wy0] = toWorld(size.w, size.h);
+    const [wx0, wy0] = toWorld(0, 0);
+    const [wx1, wy1] = toWorld(size.w, size.h);
     ctx.beginPath();
     for (let x = Math.floor(wx0 / step) * step; x <= wx1; x += step) {
       const [sx] = toScreen(x, 0);
@@ -181,13 +186,12 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
 
   const hitTest = useCallback(
     (sx: number, sy: number): { index: number; grab: Grab } | null => {
-      // The selected triangle's handles win, so a handle under another
-      // triangle stays reachable.
-      const order = [selected, ...coefs.map((_, i) => i).filter((i) => i !== selected)];
-      for (const i of order) {
-        const c = coefs[i];
-        if (!c) continue;
-        const v = verts(c);
+      // Only the SELECTED triangle's handles are drawn, so only they are
+      // grabbable — hit-testing invisible handles of other triangles would
+      // turn a click meant to select into an accidental reshape.
+      const c0 = coefs[selected];
+      if (c0) {
+        const v = verts(c0);
         const checks: [Grab, [number, number]][] = [
           [{ kind: "x" }, v.x],
           [{ kind: "y" }, v.y],
@@ -196,11 +200,13 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
         for (const [g, w] of checks) {
           const [hx, hy] = toScreen(...w);
           if (Math.hypot(hx - sx, hy - sy) <= HANDLE_PX + 3) {
-            return { index: i, grab: g };
+            return { index: selected, grab: g };
           }
         }
       }
-      // Otherwise, grab the body of whichever triangle contains the point.
+      // Otherwise, grab the body of whichever triangle contains the point,
+      // the selected one first.
+      const order = [selected, ...coefs.map((_, i) => i).filter((i) => i !== selected)];
       for (const i of order) {
         const c = coefs[i];
         if (!c) continue;
@@ -230,6 +236,7 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
 
     if (hit.index !== selected) onSelect(hit.index);
     grab.current = hit;
+    lastDraft.current = null;
     e.currentTarget.setPointerCapture(e.pointerId);
   };
 
@@ -241,7 +248,7 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
     if (panning.current) {
       const dx = (sx - panning.current.x) / view.scale;
       const dy = (sy - panning.current.y) / view.scale;
-      setView((v) => ({ ...v, ox: panning.current!.ox + dx, oy: panning.current!.oy - dy }));
+      setView((v) => ({ ...v, ox: panning.current!.ox + dx, oy: panning.current!.oy + dy }));
       return;
     }
 
@@ -251,7 +258,7 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
     if (!c) return;
 
     const [wx, wy] = toWorld(sx, sy);
-    const next = [...c] as Coefs;
+    const next = [...(lastDraft.current ?? c)] as Coefs;
 
     switch (g.grab.kind) {
       case "o":
@@ -275,17 +282,22 @@ export function TriangleCanvas({ coefs, selected, onSelect, onChange }: Triangle
         break;
       }
     }
+    lastDraft.current = next;
     onChange(g.index, next, false);
   };
 
   const endDrag = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (grab.current) {
-      const c = coefs[grab.current.index];
+      // Commit the LAST DRAGGED value, not the coefs prop — the prop can lag
+      // the final pointermove by a React render, and committing it would snap
+      // the triangle back by one move-delta.
+      const c = lastDraft.current ?? coefs[grab.current.index];
       // Commit once on release so the full-quality render happens exactly once.
       if (c) onChange(grab.current.index, [...c] as Coefs, true);
     }
     grab.current = null;
     panning.current = null;
+    lastDraft.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }

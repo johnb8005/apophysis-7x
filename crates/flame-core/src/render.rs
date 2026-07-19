@@ -136,6 +136,10 @@ pub fn render(flame: &Flame, seed: u64) -> Image {
 
     // `actual_density` is what was really sampled, which is what the tone
     // mapper must use — otherwise a truncated render comes out too dark.
+    // Because `batches` was derived from the zoom-scaled sample_density, this
+    // already carries the `scale²` factor that Delphi's CreateImage applies to
+    // its nominal `fcp.actual_density` (ImageMaker.pas:448) — the tone mapper
+    // must not apply it again.
     let actual_density =
         batches as f64 * SUB_BATCH_SIZE as f64 * oversample * oversample / bucket_size;
 
@@ -158,8 +162,10 @@ pub fn tone_map(
     let funcval =
         if flame.gamma_threshold != 0.0 { flame.gamma_threshold.powf(gamma - 1.0) } else { 0.0 };
 
-    let scale = 2f64.powf(flame.zoom);
-    let mut sample_density = actual_density * scale * scale;
+    // `actual_density` is the sampled density and already includes the zoom
+    // factor (see `render`), so it is used as-is. Delphi reaches the same
+    // value by scaling a nominal density once here (ImageMaker.pas:448).
+    let mut sample_density = actual_density;
     if sample_density == 0.0 {
         sample_density = 0.001;
     }
@@ -300,4 +306,71 @@ pub fn tone_map(
     }
 
     Image { width: flame.width, height: flame.height, data: out }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::builtins::{Builtin, BuiltinVar};
+    use crate::flame::{Affine, XForm};
+    use crate::genome::Flame;
+    use crate::rng::Rng;
+    use crate::variation::Variation;
+
+    fn tiny_flame() -> Flame {
+        let mut f = Flame::default();
+        let half = |e: f64, ff: f64| Affine { a: 0.5, b: 0.0, c: 0.0, d: 0.5, e, f: ff };
+        for (coefs, color) in [(half(0.0, 0.0), 0.0), (half(0.5, 0.0), 0.5), (half(0.25, 0.5), 1.0)]
+        {
+            let mut xf = XForm::default();
+            xf.coefs = coefs;
+            xf.color = color;
+            xf.density = 1.0;
+            xf.set_variations(vec![(
+                Box::new(BuiltinVar::new(Builtin::Linear)) as Box<dyn Variation>,
+                1.0,
+            )]);
+            f.xforms.push(xf);
+        }
+        f.width = 96;
+        f.height = 96;
+        f.center = [0.5, 0.5];
+        f.pixels_per_unit = 96.0;
+        f.sample_density = 40.0;
+        f
+    }
+
+    fn mean_luma(f: &Flame) -> f64 {
+        let mut f = f.clone();
+        let mut rng = Rng::new(1);
+        f.prepare(&mut rng);
+        let img = super::render(&f, 1);
+        let sum: u64 = img
+            .data
+            .chunks(4)
+            .map(|p| (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3)
+            .sum();
+        sum as f64 / (img.width * img.height) as f64
+    }
+
+    /// zoom=z with pixels_per_unit divided by 2^z frames the identical image
+    /// (ppux = ppu * 2^zoom), just sampled 4^z times as densely. The tone
+    /// mapper must keep brightness invariant across that trade — the original
+    /// applies the zoom quality factor exactly once (ImageMaker.pas:448).
+    /// Applying it twice made every zoomed render come out dark.
+    #[test]
+    fn zoom_quality_factor_applied_exactly_once() {
+        let base = tiny_flame();
+        let plain = mean_luma(&base);
+
+        let mut zoomed = base.clone();
+        zoomed.zoom = 1.0;
+        zoomed.pixels_per_unit = base.pixels_per_unit / 2.0;
+        let z = mean_luma(&zoomed);
+
+        assert!(plain > 5.0, "test flame renders black: {plain}");
+        assert!(
+            (z - plain).abs() / plain < 0.1,
+            "zoom changed brightness: zoom=0 -> {plain}, zoom=1 -> {z}"
+        );
+    }
 }

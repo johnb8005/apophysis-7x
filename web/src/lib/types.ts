@@ -15,6 +15,7 @@ export interface FlameParams {
   gamma: number;
   vibrancy: number;
   gammaThreshold: number;
+  /** 0–255 per channel — the unit the Rust renderer stores and expects. */
   background: [number, number, number];
 
   // Sampling
@@ -77,7 +78,7 @@ export type WorkerRequest =
   | { type: "loadDemo"; id: number; name: string }
   | { type: "loadFile"; id: number; xml: string; index: number }
   | { type: "render"; id: number; params: FlameParams }
-  | { type: "save"; id: number }
+  | { type: "save"; id: number; params?: FlameParams }
   | { type: "setPalette"; id: number; index: number }
   | { type: "setVariation"; id: number; xform: number; name: string; weight: number }
   | { type: "setCoefs"; id: number; xform: number; coefs: number[] }

@@ -345,15 +345,21 @@ impl FlameHandle {
 
     /// Render at the given size, returning RGBA8 bytes (length w*h*4).
     ///
-    /// Width/height override the genome so the UI can render previews cheaply
-    /// without mutating document state.
+    /// Width/height override the genome for this render only — the document's
+    /// own size is restored afterwards, so preview and thumbnail renders never
+    /// leak their size into a subsequent save.
     pub fn render(&mut self, width: usize, height: usize) -> Vec<u8> {
+        let (doc_w, doc_h) = (self.flame.width, self.flame.height);
         self.flame.width = width.max(1);
         self.flame.height = height.max(1);
 
         let mut rng = Rng::new(self.seed);
         self.flame.prepare(&mut rng);
-        render(&self.flame, self.seed).data
+        let data = render(&self.flame, self.seed).data;
+
+        self.flame.width = doc_w;
+        self.flame.height = doc_h;
+        data
     }
 
     // --- Camera ---
@@ -469,6 +475,28 @@ impl FlameHandle {
     #[wasm_bindgen(js_name = setBackground)]
     pub fn set_background(&mut self, r: f64, g: f64, b: f64) {
         self.flame.background = [r, g, b];
+    }
+
+    /// Background as `[r, g, b]`, 0–255 (the unit the renderer stores).
+    pub fn background(&self) -> Vec<f64> {
+        self.flame.background.to_vec()
+    }
+
+    /// The document's own canvas size, as loaded or set — NOT the size of the
+    /// last render, which is transient.
+    #[wasm_bindgen(js_name = flameWidth, getter)]
+    pub fn flame_width(&self) -> usize {
+        self.flame.width
+    }
+    #[wasm_bindgen(js_name = flameHeight, getter)]
+    pub fn flame_height(&self) -> usize {
+        self.flame.height
+    }
+    /// Set the document canvas size (what a save writes as `size="w h"`).
+    #[wasm_bindgen(js_name = setSize)]
+    pub fn set_size(&mut self, width: usize, height: usize) {
+        self.flame.width = width.max(1);
+        self.flame.height = height.max(1);
     }
 
     // --- Transforms (read-only for now; the editor will extend this) ---

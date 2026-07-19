@@ -309,7 +309,10 @@ impl Flame {
             self.xforms[xi].next_point(&mut p, rng, &mut g);
         }
 
-        let use_final = self.final_enabled && self.final_xform.is_some();
+        // `FinalXformEnabled and HasFinalXForm` (ControlPoint.pas:420): a
+        // present-but-trivial final xform must be skipped, not applied.
+        let use_final = self.final_enabled
+            && self.final_xform.as_ref().is_some_and(|fx| fx.is_meaningful());
         let mut out = Point::default();
 
         for _ in 0..SUB_BATCH_SIZE {

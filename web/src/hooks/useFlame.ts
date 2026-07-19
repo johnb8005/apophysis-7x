@@ -89,10 +89,21 @@ export function useFlame() {
       }
 
       switch (msg.type) {
-        case "error":
-          inFlight.current = null;
-          setState((s) => ({ ...s, rendering: false, error: msg.message }));
+        case "error": {
+          // Only an error from the in-flight render clears the coalescing
+          // state; an unrelated failure (bad file, palette fetch) must not,
+          // or a queued stale render could start and overwrite newer frames.
+          if (msg.id === inFlight.current) {
+            inFlight.current = null;
+            const queued = pending.current;
+            pending.current = null;
+            setState((s) => ({ ...s, rendering: false, error: msg.message }));
+            if (queued) render(queued);
+          } else {
+            setState((s) => ({ ...s, error: msg.message }));
+          }
           return;
+        }
 
         case "loaded":
           setState((s) => ({
@@ -100,6 +111,9 @@ export function useFlame() {
             info: msg.info,
             warnings: msg.warnings,
             error: null,
+            // Any load (file, demo, adopted mutant) invalidates the grid —
+            // its handles belong to the previous flame.
+            mutants: null,
           }));
           return;
 
@@ -158,10 +172,16 @@ export function useFlame() {
     [request],
   );
 
-  const save = useCallback(async (): Promise<string | null> => {
-    const msg = await request({ type: "save" });
-    return msg.type === "saved" ? msg.xml : null;
-  }, [request]);
+  const save = useCallback(
+    async (params?: FlameParams): Promise<string | null> => {
+      // Pass the UI's current params so the worker syncs them before
+      // serialising — without this, saving during an in-flight render writes
+      // the previous camera/tone values.
+      const msg = await request({ type: "save", params });
+      return msg.type === "saved" ? msg.xml : null;
+    },
+    [request],
+  );
 
   const setPalette = useCallback(
     (index: number) => request({ type: "setPalette", index }),

@@ -63,22 +63,25 @@ a Web Worker so the interface stays responsive during a render.
 ### What is ported
 
 - `XForm` / `ControlPoint` data model, with the original's exact transform ordering
-- All 29 built-in variations
+- All 29 built-in and all 47 plugin variations — 76 in total
 - The chaos game, including per-transform xaos tables (a first-order Markov chain)
 - Camera projection: 2D, pitch, pitch+yaw, and depth of field
 - Gaussian reconstruction filter and log-density tone mapping
-
-- All 29 built-in and all 47 plugin variations — 76 in total
-- `.flame` load and save, including the `new_linear` compatibility path
+- `.flame` load and save, including the `new_linear` compatibility path and the
+  legacy alias/`var=` notations
 - All 701 built-in gradients
 - The transform editor: triangle canvas, variations, variables, xaos, colors
+- The mutation grid (deterministic seeds; "ported in spirit" — see mutate.rs)
+- The curves editor
 - Mouse navigation, undo/redo, PNG export
 
 ### Not yet ported
 
-The mutation grid, the curves editor, and the Pascal scripting engine. The
-Chaotica and UPR exporters are deliberately dropped — they target external
-native renderers that cannot exist in a browser.
+The Pascal scripting engine. The Chaotica and UPR exporters are deliberately
+dropped — they target external native renderers that cannot exist in a browser.
+
+A full fidelity review of the port against the Delphi sources, with every known
+divergence, lives in [`docs/PORT_REVIEW.md`](docs/PORT_REVIEW.md).
 
 ---
 

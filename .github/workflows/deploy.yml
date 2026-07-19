@@ -16,8 +16,32 @@ permissions:
   id-token: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-test-${{ hashFiles('Cargo.toml', 'crates/flame-core/Cargo.toml') }}
+          restore-keys: cargo-test-
+
+      - name: Run tests
+        run: cargo test --release
+
+      # No -D warnings: deny-level lints still fail the build, but the
+      # existing warning backlog doesn't block deploys.
+      - name: Clippy
+        run: cargo clippy --release
+
   build:
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
 
@@ -30,8 +54,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            crates/flame-core/target
-          key: cargo-${{ hashFiles('crates/flame-core/Cargo.toml') }}
+            target
+          key: cargo-${{ hashFiles('Cargo.toml', 'crates/flame-core/Cargo.toml') }}
           restore-keys: cargo-
 
       - name: Install wasm-pack

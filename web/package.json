@@ -4,9 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "license": "GPL-2.0-or-later",
+  "trustedDependencies": [
+    "wasm-pack"
+  ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "node scripts/check-wasm.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "wasm": "cd ../crates/flame-core && wasm-pack build --target web --release --out-dir ../../web/src/wasm"
   },

@@ -94,9 +94,16 @@ export function Viewport({
       case "pan": {
         // The renderer maps world +y to increasing rows, so both axes move the
         // same way: dragging the image right decreases the camera centre.
+        // With a rotated camera the screen axes are the rotated world axes
+        // (plot: screen = R(angle)·world), so the drag delta must be rotated
+        // back or a horizontal drag pans diagonally.
+        const ca = Math.cos(d.angle);
+        const sa = Math.sin(d.angle);
+        const wx = ca * dx - sa * dy;
+        const wy = sa * dx + ca * dy;
         onNavigate({
-          centerX: d.centerX - dx / ppu,
-          centerY: d.centerY - dy / ppu,
+          centerX: d.centerX - wx / ppu,
+          centerY: d.centerY - wy / ppu,
         });
         return;
       }
@@ -127,8 +134,25 @@ export function Viewport({
     }
   };
 
+  // Wheel zoom accumulates locally between renders (the `zoom` prop lags
+  // inside a React batch, so `zoom + step` per tick would drop increments),
+  // and renders at preview quality until the wheel goes quiet.
+  const wheelBase = useRef<{ zoom: number; propZoom: number } | null>(null);
+  const wheelIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
-    onNavigate({ zoom: zoom + (e.deltaY < 0 ? 0.15 : -0.15) });
+    if (!wheelBase.current || wheelBase.current.propZoom !== zoom) {
+      // (Re)anchor whenever the prop caught up or this is a fresh burst.
+      wheelBase.current = { zoom, propZoom: zoom };
+    }
+    wheelBase.current.zoom += e.deltaY < 0 ? 0.15 : -0.15;
+    onInteract(true);
+    onNavigate({ zoom: wheelBase.current.zoom });
+    if (wheelIdle.current) clearTimeout(wheelIdle.current);
+    wheelIdle.current = setTimeout(() => {
+      wheelBase.current = null;
+      // Ends the interaction, letting the full-quality render land.
+      onInteract(false);
+    }, 250);
   };
 
   const modes: [MouseMode, typeof Move, string][] = [
