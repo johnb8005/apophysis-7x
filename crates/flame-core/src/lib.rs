@@ -84,6 +84,91 @@ mod tests {
         assert!((p.x - 0.1).abs() < 1e-12);
     }
 
+    /// Within a pass, execution order is the registry order, not the order
+    /// variations were attached in (`XForm.pas:344-383` iterates by registry
+    /// index). pre_spherical registers before pre_sinusoidal in the original,
+    /// and the two don't commute, so both attachment orders must produce the
+    /// spherical-then-sinusoidal composition.
+    #[test]
+    fn within_pass_order_is_registry_order_not_attachment_order() {
+        let run = |names: [&str; 2]| {
+            let mut xf = XForm::default();
+            xf.density = 1.0;
+            xf.set_variations(vec![
+                (crate::registry::create(names[0]).unwrap(), 1.0),
+                (crate::registry::create(names[1]).unwrap(), 1.0),
+                (Box::new(BuiltinVar::new(Builtin::Linear)) as Box<dyn Variation>, 1.0),
+            ]);
+            let mut rng = Rng::new(7);
+            xf.prepare(&mut rng);
+            let mut g = GaussBuf::new(&mut rng);
+            let mut p = Point { x: 0.3, y: -0.6, z: 0.0, c: 0.0, o: 1.0 };
+            xf.next_point(&mut p, &mut rng, &mut g);
+            (p.x, p.y)
+        };
+
+        let a = run(["pre_spherical", "pre_sinusoidal"]);
+        let b = run(["pre_sinusoidal", "pre_spherical"]);
+        assert_eq!(a, b, "attachment order changed the composition");
+
+        // And the composition really is spherical first: applying them by
+        // hand in that order must reproduce the xform's output.
+        let (x0, y0) = (0.3f64, -0.6f64);
+        let r2 = x0 * x0 + y0 * y0 + 1.0e-5; // pre_spherical's 10e-6 guard
+        let (sx, sy) = (x0 / r2, y0 / r2);
+        let expect = (sx.sin(), sy.sin());
+        assert!((a.0 - expect.0).abs() < 1e-12, "{} vs {}", a.0, expect.0);
+        assert!((a.1 - expect.1).abs() < 1e-12, "{} vs {}", a.1, expect.1);
+    }
+
+    /// `HasFinalXForm` (ControlPoint.pas:2320): a final xform is "not there"
+    /// exactly when coefs and post are identity, symmetry is 1, linear is 1,
+    /// and every other weight is 0. The test is on weights, not attachment.
+    #[test]
+    fn is_meaningful_mirrors_has_final_xform() {
+        let linear1 = || (Box::new(BuiltinVar::new(Builtin::Linear)) as Box<dyn Variation>, 1.0);
+
+        let mut trivial = XForm::default();
+        trivial.symmetry = 1.0;
+        trivial.set_variations(vec![linear1()]);
+        assert!(!trivial.is_meaningful(), "identity + symmetry 1 + linear 1 is a pass-through");
+
+        // A zero-weighted extra variation doesn't make it meaningful.
+        let mut with_zero = trivial.clone();
+        with_zero.set_variations(vec![
+            linear1(),
+            (Box::new(BuiltinVar::new(Builtin::Swirl)) as Box<dyn Variation>, 0.0),
+        ]);
+        assert!(!with_zero.is_meaningful());
+
+        // Each departure from the pass-through state makes it meaningful.
+        let mut coefs = trivial.clone();
+        coefs.coefs.e = 0.5;
+        assert!(coefs.is_meaningful());
+
+        let mut sym = trivial.clone();
+        sym.symmetry = 0.0;
+        assert!(sym.is_meaningful());
+
+        let mut weighted = trivial.clone();
+        weighted.set_variations(vec![
+            linear1(),
+            (Box::new(BuiltinVar::new(Builtin::Swirl)) as Box<dyn Variation>, 0.3),
+        ]);
+        assert!(weighted.is_meaningful());
+
+        let mut scaled_linear = trivial.clone();
+        scaled_linear
+            .set_variations(vec![(Box::new(BuiltinVar::new(Builtin::Linear)) as Box<dyn Variation>, 0.5)]);
+        assert!(scaled_linear.is_meaningful());
+
+        // No variations at all: linear is 0, not 1, so Delphi applies it
+        // (and both engines collapse the point) — meaningful.
+        let mut empty = trivial.clone();
+        empty.set_variations(vec![]);
+        assert!(empty.is_meaningful());
+    }
+
     /// The post affine must not touch z (`DoPostTransform` writes x and y only).
     #[test]
     fn post_affine_leaves_z_alone() {

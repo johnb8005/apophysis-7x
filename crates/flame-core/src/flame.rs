@@ -206,13 +206,23 @@ impl XForm {
         let mut tagged: Vec<(Box<dyn Variation>, f64)> =
             self.vars.iter().filter(|(_, w)| *w != 0.0).cloned().collect();
 
-        // Stable partition into the three passes.
+        // Order by pass, then by registry index within the pass. The original
+        // iterates each pass over the fixed registry (`XForm.pas:344-383`), so
+        // within-pass execution order is the registration order, NOT the order
+        // the `.flame` file happens to list its attributes in. This matters
+        // wherever two same-pass variations don't commute (any two `pre_`s,
+        // any two `post_`s, and `flatten` — registry index 1 — which must run
+        // before the `post_*` plugins). Files written by Apophysis list
+        // attributes in registry order, so the two orders coincide there, but
+        // hand-edited files need not.
         let rank = |p: Pass| match p {
             Pass::Pre => 0,
             Pass::Normal => 1,
             Pass::Post => 2,
         };
-        tagged.sort_by_key(|(v, _)| rank(v.pass()));
+        tagged.sort_by_key(|(v, _)| {
+            (rank(v.pass()), crate::registry::order_index(v.name()).unwrap_or(usize::MAX))
+        });
 
         self.normal_start = tagged.iter().filter(|(v, _)| v.pass() == Pass::Pre).count();
 
@@ -311,11 +321,17 @@ impl XForm {
     }
 
     /// True if this xform differs from a pass-through, i.e. is worth applying
-    /// as a final xform. Mirrors `TControlPoint.HasFinalXForm`.
+    /// as a final xform. Mirrors `TControlPoint.HasFinalXForm`
+    /// (ControlPoint.pas:2320): identity coefs and post, `symmetry = 1`,
+    /// `linear = 1`, and every other variation weight 0 means "not used".
+    /// The variation test is on *weights*, not on which entries are attached.
     pub fn is_meaningful(&self) -> bool {
-        !self.coefs.is_identity()
-            || !self.post.is_identity()
-            || self.symmetry != 1.0
-            || !self.vars.is_empty()
+        if !self.coefs.is_identity() || !self.post.is_identity() || self.symmetry != 1.0 {
+            return true;
+        }
+        self.vars
+            .iter()
+            .any(|(v, w)| if v.name() == "linear" { *w != 1.0 } else { *w != 0.0 })
+            || !self.vars.iter().any(|(v, w)| v.name() == "linear" && *w == 1.0)
     }
 }

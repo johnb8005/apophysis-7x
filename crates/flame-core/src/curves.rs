@@ -24,8 +24,12 @@ impl Default for Curve {
 }
 
 impl Curve {
+    /// "Unset" as the original defines it: `curvesSet`
+    /// (ImageMaker.pas:429-437) compares only the control POINTS against the
+    /// default — the weights are deliberately ignored, so default points with
+    /// exotic weights still count as unset and the curve is skipped.
     pub fn is_identity(&self) -> bool {
-        *self == Curve::default()
+        self.points == Curve::default().points
     }
 
     /// Evaluate the curve at parameter `t`, returning y.
@@ -236,7 +240,6 @@ mod tests {
 
 #[cfg(test)]
 mod render_integration {
-    use super::*;
     use crate::builtins::{Builtin, BuiltinVar};
     use crate::flame::{Affine, XForm};
     use crate::genome::Flame;

@@ -248,11 +248,52 @@ fn unescape(s: &str) -> String {
     if !s.contains('&') {
         return s.to_owned();
     }
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
+    // Named entities plus numeric character references (&#NNN; / &#xNN;) —
+    // LibXmlParser resolves both (`ReplaceCharacterEntities`), and flame
+    // names in the wild do use the numeric form.
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find('&') {
+        out.push_str(&rest[..pos]);
+        rest = &rest[pos..];
+        let Some(end) = rest.find(';') else {
+            // Unterminated entity: emit verbatim, as a tolerant parser must.
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..end];
+        let decoded: Option<char> = match entity {
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "amp" => Some('&'),
+            _ => entity
+                .strip_prefix('#')
+                .and_then(|num| {
+                    if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+                        u32::from_str_radix(hex, 16).ok()
+                    } else {
+                        num.parse::<u32>().ok()
+                    }
+                })
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[end + 1..];
+            }
+            None => {
+                // Unknown entity: keep it verbatim rather than dropping text.
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Parse every top-level element in a document.
@@ -310,6 +351,17 @@ mod tests {
         assert_eq!(el.attr("weight"), Some("1"));
         assert_eq!(el.attr("name"), Some("foo"));
         assert_eq!(el.attr("var_color"), Some("0.5"), "attribute after the gap was lost");
+    }
+
+    /// LibXmlParser resolves numeric character references as well as the five
+    /// named entities; flame names in the wild use both.
+    #[test]
+    fn resolves_numeric_character_references() {
+        let el = &parse(r#"<flame name="caf&#233; &#x263A; &amp; more"/>"#)[0];
+        assert_eq!(el.attr("name"), Some("café ☺ & more"));
+        // Malformed references stay verbatim rather than eating text.
+        let el = &parse(r#"<flame name="a &#xZZ; b &unknown; c & d"/>"#)[0];
+        assert_eq!(el.attr("name"), Some("a &#xZZ; b &unknown; c & d"));
     }
 
     #[test]

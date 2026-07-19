@@ -61,7 +61,7 @@ const FLATTEN_SUPPRESSORS: [&str; 24] = [
 ];
 
 /// Attributes on `<xform>` that are structural rather than variation weights.
-const RESERVED_XFORM_ATTRS: [&str; 12] = [
+const RESERVED_XFORM_ATTRS: [&str; 14] = [
     "weight",
     "color",
     "symmetry",
@@ -74,6 +74,9 @@ const RESERVED_XFORM_ATTRS: [&str; 12] = [
     "name",
     "var_color",
     "enabled",
+    // Legacy index-based variation notation, handled separately.
+    "var",
+    "var1",
 ];
 
 /// Load every flame in a `.flame` document.
@@ -128,20 +131,24 @@ fn load_flame(el: &Element) -> (Flame, Vec<LoadWarning>) {
     if let Some(v) = el.attr_f64("cam_yaw") {
         f.cam_yaw = v;
     }
-    if let Some(v) = el.attr_f64("cam_perspective") {
-        f.cam_persp = v;
-    }
-    // Legacy alias: cam_dist is the reciprocal of cam_perspective.
+    // Legacy alias first: cam_dist is the reciprocal of cam_perspective, and
+    // the original reads it BEFORE cam_perspective (Main.pas:5133-5136), so
+    // cam_perspective wins when a file carries both. (The zero guard is ours;
+    // Delphi would fault on 1/0.)
     if let Some(v) = el.attr_f64("cam_dist") {
         if v != 0.0 {
             f.cam_persp = 1.0 / v;
         }
     }
+    if let Some(v) = el.attr_f64("cam_perspective") {
+        f.cam_persp = v;
+    }
     if let Some(v) = el.attr_f64("cam_zpos") {
         f.cam_zpos = v;
     }
+    // abs() as in Main.pas:5141 — a negative DOF means the same blur.
     if let Some(v) = el.attr_f64("cam_dof") {
-        f.cam_dof = v;
+        f.cam_dof = v.abs();
     }
 
     // Tone. Note `brightness` is stored unscaled — only the legacy *text*
@@ -279,21 +286,64 @@ fn load_xform(
         }
         let Some(value) = xml::parse_f64(raw) else { continue };
 
+        // Aliases (bwraps2, logn, …) resolve to their canonical name, but the
+        // canonical attribute wins when both are present — `ReadWithSubst`
+        // tries the canonical name first and only then the alias.
         let canonical = registry::canonical_name(key);
+        if canonical != key && el.attr(canonical).is_some() {
+            continue;
+        }
+
         if let Some(v) = registry::create(canonical) {
             // linear and flatten are handled below when new_linear is absent.
             if !new_linear && (canonical == "linear" || canonical == "flatten") {
                 continue;
             }
-            vars.push((v, value));
+            // Two aliases of the same variation (bwraps2 + bwraps7): first
+            // one listed wins, matching the subst table's scan order closely
+            // enough for a case the original never distinguishes either.
+            if !vars.iter().any(|(existing, _)| existing.name() == canonical) {
+                vars.push((v, value));
+            }
         } else {
-            // Not a variation name — stash it as a candidate parameter.
-            seen_params.push((key.clone(), value));
+            // Not a variation name — stash it as a candidate parameter,
+            // under its canonical spelling.
+            seen_params.push((canonical.to_string(), value));
         }
     }
 
     if !new_linear {
         synthesise_linear_flatten(el, &mut vars);
+    }
+
+    // Legacy pre-2.0 notation, replacing everything read so far
+    // (Main.pas:5464-5482 zeroes all weights first): `var1="N"` sets the
+    // variation at registry index N to 1; `var="w0 w1 ..."` lists weights by
+    // registry index. Delphi applies the indices against TODAY'S registry,
+    // and so do we.
+    if let Some(v) = el.attr("var1") {
+        if let Ok(idx) = v.trim().parse::<usize>() {
+            vars.clear();
+            if let Some(name) = registry::all_names().get(idx) {
+                if let Some(var) = registry::create(name) {
+                    vars.push((var, 1.0));
+                }
+            }
+        }
+    }
+    if let Some(weights) = el.attr_floats("var") {
+        vars.clear();
+        let names = registry::all_names();
+        for (idx, w) in weights.iter().enumerate() {
+            if *w == 0.0 {
+                continue;
+            }
+            if let Some(name) = names.get(idx) {
+                if let Some(var) = registry::create(name) {
+                    vars.push((var, *w));
+                }
+            }
+        }
     }
 
     xf.set_variations(vars);
@@ -495,6 +545,75 @@ mod tests {
         let names: Vec<&str> = f.xforms[0].variations().iter().map(|(v, _)| v.name()).collect();
         assert!(names.contains(&"linear"));
         assert!(!names.contains(&"flatten"), "flatten must not be synthesised: {names:?}");
+    }
+
+    /// The CreateSubstMap aliases: variation names AND parameter names must
+    /// resolve. A legacy bwraps2 flame keeps its cellsize; logn maps to log.
+    #[test]
+    fn alias_substitution_covers_parameters() {
+        let doc = r#"<flame name="aliases" size="100 100" new_linear="1">
+            <xform weight="1" bwraps2="1" bwraps2_cellsize="0.4" bwraps2_space="0.2"
+                   logn="0.5" logn_base="3" Epispiral="1" Epispiral_n="4"
+                   coefs="1 0 0 1 0 0"/>
+        </flame>"#;
+        let r = load(doc);
+        assert!(r.warnings.is_empty(), "aliases must not warn: {:?}", r.warnings);
+        let xf = &r.flames[0].xforms[0];
+        let names: Vec<&str> = xf.variations().iter().map(|(v, _)| v.name()).collect();
+        assert!(names.contains(&"bwraps"), "{names:?}");
+        assert!(names.contains(&"log"), "{names:?}");
+        assert!(names.contains(&"epispiral"), "{names:?}");
+        assert_eq!(xf.variation_param("bwraps", "bwraps_cellsize"), Some(0.4));
+        assert_eq!(xf.variation_param("bwraps", "bwraps_space"), Some(0.2));
+        assert_eq!(xf.variation_param("log", "log_base"), Some(3.0));
+        assert_eq!(xf.variation_param("epispiral", "epispiral_n"), Some(4.0));
+    }
+
+    /// When a file carries both the canonical attribute and an alias, the
+    /// canonical one wins — ReadWithSubst tries it first (Main.pas:7005).
+    #[test]
+    fn canonical_attribute_beats_alias() {
+        let doc = r#"<flame name="both" size="100 100" new_linear="1">
+            <xform weight="1" bwraps="1" bwraps_cellsize="0.7" bwraps2_cellsize="0.1"
+                   coefs="1 0 0 1 0 0"/>
+        </flame>"#;
+        let xf = &load(doc).flames[0].xforms[0];
+        assert_eq!(xf.variation_param("bwraps", "bwraps_cellsize"), Some(0.7));
+    }
+
+    /// bwraps7 is the third spelling of the same plugin.
+    #[test]
+    fn bwraps7_maps_to_bwraps() {
+        let doc = r#"<flame name="b7" size="100 100" new_linear="1">
+            <xform weight="1" bwraps7="1" bwraps7_gain="2.5" coefs="1 0 0 1 0 0"/>
+        </flame>"#;
+        let r = load(doc);
+        assert!(r.warnings.is_empty(), "{:?}", r.warnings);
+        let xf = &r.flames[0].xforms[0];
+        assert_eq!(xf.variation_param("bwraps", "bwraps_gain"), Some(2.5));
+    }
+
+    /// Legacy `var`/`var1` notation lists weights by registry index and
+    /// replaces every other variation attribute (Main.pas:5464-5482).
+    #[test]
+    fn legacy_var_and_var1_notation_load() {
+        // var1: single variation by index. Index 2 is sinusoidal.
+        let doc = r#"<flame name="v1" size="100 100" new_linear="1">
+            <xform weight="1" linear="1" var1="2" coefs="1 0 0 1 0 0"/>
+        </flame>"#;
+        let xf = &load(doc).flames[0].xforms[0];
+        let names: Vec<&str> = xf.variations().iter().map(|(v, _)| v.name()).collect();
+        assert_eq!(names, vec!["sinusoidal"], "var1 must replace other weights");
+
+        // var: weight list by index (0 = linear, 3 = spherical).
+        let doc = r#"<flame name="v" size="100 100" new_linear="1">
+            <xform weight="1" swirl="1" var="0.5 0 0 0.25" coefs="1 0 0 1 0 0"/>
+        </flame>"#;
+        let xf = &load(doc).flames[0].xforms[0];
+        let mut got: Vec<(&str, f64)> =
+            xf.variations().iter().map(|(v, w)| (v.name(), *w)).collect();
+        got.sort_by(|a, b| a.0.cmp(b.0));
+        assert_eq!(got, vec![("linear", 0.5), ("spherical", 0.25)]);
     }
 
     /// Without new_linear, a 2D flame must gain flatten=1.

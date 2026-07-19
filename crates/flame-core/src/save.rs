@@ -5,12 +5,13 @@
 use crate::flame::{Affine, XForm};
 use crate::genome::Flame;
 
-/// Format a float the way Delphi's `%g` does: 6 significant digits, choosing
-/// between fixed and exponential, with trailing zeros stripped.
+/// Format a float the way Delphi's `%g` does: **15** significant digits,
+/// choosing between fixed and exponential, with trailing zeros stripped.
 ///
-/// Matching this matters for interoperability — Apophysis and flam3 both write
-/// `%g`, and tools in the ecosystem expect that shape. It does mean a
-/// round-trip loses precision beyond 6 digits, exactly as the original does.
+/// Delphi's `Format('%g', ...)` defaults to 15 significant digits
+/// (`FloatToStrF`/`ffGeneral`) — 6 digits is C's `%g`, i.e. flam3, not
+/// Apophysis. Real Apophysis-written files carry full-precision coefs, and
+/// re-saving one must not truncate them, so precision here is load-bearing.
 pub fn g(v: f64) -> String {
     if v == 0.0 {
         // Avoid emitting "-0".
@@ -20,7 +21,7 @@ pub fn g(v: f64) -> String {
         return "0".to_string();
     }
 
-    const P: i32 = 6;
+    const P: i32 = 15;
     let exp = v.abs().log10().floor() as i32;
 
     let mut s = if exp < -4 || exp >= P {
@@ -153,8 +154,12 @@ pub fn write_flame(f: &Flame) -> String {
     for xf in &f.xforms {
         out.push_str(&write_xform(xf, false));
     }
+    // Delphi gates emission on HasFinalXForm (Main.pas), so a trivial
+    // pass-through final xform is not written out.
     if let Some(fx) = &f.final_xform {
-        out.push_str(&write_xform(fx, true));
+        if fx.is_meaningful() {
+            out.push_str(&write_xform(fx, true));
+        }
     }
 
     out.push_str(&write_palette(f));
@@ -276,12 +281,28 @@ mod tests {
         assert_eq!(g(1.0), "1");
         assert_eq!(g(0.5), "0.5");
         assert_eq!(g(-0.25), "-0.25");
-        // 6 significant digits, trailing zeros stripped.
-        assert_eq!(g(1.0 / 3.0), "0.333333");
+        // 15 significant digits (Delphi's default), trailing zeros stripped.
+        assert_eq!(g(1.0 / 3.0), "0.333333333333333");
         assert_eq!(g(123456.0), "123456");
-        // Beyond 6 significant digits switches to exponential.
-        assert_eq!(g(1234567.0), "1.23457e+06");
+        assert_eq!(g(1234567.0), "1234567");
+        // A real coef from an Apophysis-written file survives verbatim.
+        assert_eq!(g(0.976698708231165), "0.976698708231165");
+        // Small magnitudes switch to exponential below 1e-4, as %g does.
         assert_eq!(g(0.000012345), "1.2345e-05");
+        // 16+ digits left of the point switches to exponential.
+        assert_eq!(g(1e16), "1e+16");
+    }
+
+    /// Delphi writes 15 significant digits; a full-precision coef must
+    /// round-trip without loss — truncation subtly changes the render.
+    #[test]
+    fn round_trips_full_precision_floats() {
+        let mut a = sample();
+        a.xforms[0].coefs.a = 0.976698708231165;
+        a.xforms[0].density = 0.333333333333333;
+        let b = load::load(&write_flame(&a)).flames.pop().unwrap();
+        assert_eq!(b.xforms[0].coefs.a, 0.976698708231165);
+        assert_eq!(b.xforms[0].density, 0.333333333333333);
     }
 
     fn sample() -> Flame {
