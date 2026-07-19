@@ -1,3 +1,6 @@
 node_modules
 dist
 src/wasm
+
+# Smoke-test screenshot (scripts/smoke.mjs)
+smoke.png
